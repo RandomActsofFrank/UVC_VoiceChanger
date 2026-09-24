@@ -7,6 +7,8 @@ ESP32/ESP32-S3 cosplay voice changer by [s60sc](https://github.com/s60sc/ESP32_V
 | [`ESP/`](ESP/) | Original Arduino firmware (unchanged reference) |
 | [`linux/`](linux/) | Pi audio engine — Milestone 1 ALSA stereo pass-through + device GUI |
 
+**All setup below is meant to be run on the Raspberry Pi itself** (SSH or local terminal), not from a Mac/PC.
+
 ## Milestone 1 — ALSA stereo pass-through + device selection
 
 ```
@@ -28,19 +30,42 @@ USB playback (speakers / headphones / amp)
 - XRUN recovery retained
 - CLI mode still available (`--cli`)
 
-### Build on Raspberry Pi OS 64-bit
+### 1. Clone from GitHub (on the Pi)
 
 ```bash
 sudo apt update
-sudo apt install build-essential libasound2-dev libgtk-3-dev pkg-config
-cd linux
+sudo apt install -y git
+cd ~
+git clone https://github.com/RandomActsofFrank/UVC_VoiceChanger.git
+cd UVC_VoiceChanger
+```
+
+To refresh later:
+
+```bash
+cd ~/UVC_VoiceChanger
+git pull
+```
+
+### 2. Install build dependencies
+
+```bash
+sudo apt install -y build-essential libasound2-dev libgtk-3-dev pkg-config
+```
+
+### 3. Build
+
+```bash
+cd ~/UVC_VoiceChanger/linux
 make
 ```
 
-### Run (GUI)
+### 4. Run (GUI)
+
+Needs a display (desktop session, or `DISPLAY` set over SSH with X11 forwarding / VNC).
 
 ```bash
-cd linux
+cd ~/UVC_VoiceChanger/linux
 ./uvc_pass
 # or
 ./uvc_pass --gui
@@ -52,9 +77,10 @@ cd linux
 4. Click **Stop Audio** before changing devices.
 5. **Refresh devices** after plugging USB gear.
 
-### Run (CLI / headless)
+### 5. Run (CLI / headless)
 
 ```bash
+cd ~/UVC_VoiceChanger/linux
 ./uvc_pass --list
 ./uvc_pass --cli --input plughw:1,0 --output plughw:2,0
 ```
