@@ -1,12 +1,13 @@
 /*
  * ALSA duplex capture/playback for the UVC Linux audio engine.
- * Milestone 1: stereo (or N-channel) pass-through. No DSP, no downmix.
+ * Milestone 1: stereo pass-through. No DSP, no downmix.
  */
 
 #include "alsa_io.h"
 
 #include <alsa/asoundlib.h>
 #include <ctype.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,20 @@ struct AlsaDuplex {
     char output_name[128];
 };
 
+static char g_last_error[512] = {0};
+
+static void set_error(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_last_error, sizeof(g_last_error), fmt, ap);
+    va_end(ap);
+    fprintf(stderr, "%s\n", g_last_error);
+}
+
+const char* alsa_last_error(void) {
+    return g_last_error[0] ? g_last_error : "";
+}
+
 void engine_config_defaults(EngineConfig* cfg) {
     memset(cfg, 0, sizeof(*cfg));
     snprintf(cfg->input_dev, sizeof(cfg->input_dev), "%s", "default");
@@ -34,6 +49,8 @@ void engine_config_defaults(EngineConfig* cfg) {
     cfg->amp_gain = 1.0f;
     cfg->list_only = 0;
     cfg->verbose = 1;
+    cfg->use_gui = 0;
+    cfg->use_cli = 0;
 }
 
 static int looks_like_play3(const char* name) {
@@ -93,11 +110,14 @@ static void try_autofill_play3(EngineConfig* cfg) {
 void engine_print_usage(const char* argv0) {
     fprintf(stderr,
             "Usage: %s [options]\n"
+            "  (no flags)             Open the device-selection GUI (if built with GTK)\n"
+            "  --gui                  Force the GUI\n"
+            "  --cli                  Headless CLI pass-through (no GUI)\n"
             "  --list                 List ALSA PCM devices and exit\n"
-            "  --input DEV            Capture device (default: auto Play! 3 or 'default')\n"
-            "  --output DEV           Playback device (default: same as input)\n"
-            "  --rate N               Sample rate Hz (default: 48000)\n"
-            "  --channels N           Channels (default: 2, stereo — no downmix)\n"
+            "  --input DEV            Capture device\n"
+            "  --output DEV           Playback device\n"
+            "  --rate N               Sample rate Hz (default/required: 48000)\n"
+            "  --channels N           Channels (default/required: 2)\n"
             "  --period N             Period size in frames (default: 256)\n"
             "  --buffer N             Buffer size in frames (default: 1024)\n"
             "  --mic-gain F           Input linear gain (default: 1.0)\n"
@@ -105,7 +125,8 @@ void engine_print_usage(const char* argv0) {
             "  --quiet                Less logging\n"
             "  -h, --help             This help\n"
             "\n"
-            "Milestone 1: ALSA stereo pass-through only. No DSP yet.\n",
+            "Milestone 1: ALSA stereo pass-through only. No DSP.\n"
+            "Format is strict: S16_LE, requested rate, requested channels.\n",
             argv0);
 }
 
@@ -116,6 +137,10 @@ int engine_parse_args(int argc, char** argv, EngineConfig* cfg) {
         const char* next = (i + 1 < argc) ? argv[i + 1] : NULL;
         if (!strcmp(a, "--list")) {
             cfg->list_only = 1;
+        } else if (!strcmp(a, "--gui")) {
+            cfg->use_gui = 1;
+        } else if (!strcmp(a, "--cli")) {
+            cfg->use_cli = 1;
         } else if (!strcmp(a, "--quiet")) {
             cfg->verbose = 0;
         } else if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
@@ -159,7 +184,7 @@ int engine_parse_args(int argc, char** argv, EngineConfig* cfg) {
     if (cfg->buffer_frames < cfg->period_frames * 2) {
         cfg->buffer_frames = cfg->period_frames * 2;
     }
-    if (!cfg->list_only) {
+    if (!cfg->list_only && cfg->use_cli) {
         try_autofill_play3(cfg);
         if (!strcmp(cfg->output_dev, "default") && strcmp(cfg->input_dev, "default") != 0) {
             snprintf(cfg->output_dev, sizeof(cfg->output_dev), "%s", cfg->input_dev);
@@ -168,29 +193,117 @@ int engine_parse_args(int argc, char** argv, EngineConfig* cfg) {
     return 0;
 }
 
-int alsa_list_devices(void) {
+static int skip_hint_name(const char* name) {
+    if (!name || !name[0]) {
+        return 1;
+    }
+    /* Keep real cards; skip abstract plugins that clutter the GUI. */
+    if (!strcmp(name, "null") || !strcmp(name, "oss") || !strcmp(name, "jack") ||
+        !strcmp(name, "speex") || !strcmp(name, "upmix") || !strcmp(name, "vdownmix") ||
+        !strcmp(name, "lavrate") || !strcmp(name, "samplerate") || !strcmp(name, "a52") ||
+        !strcmp(name, "dmix") || !strcmp(name, "dsnoop")) {
+        return 1;
+    }
+    return 0;
+}
+
+static int hint_matches_stream(const char* ioid, int want_capture) {
+    if (!ioid) {
+        return 1; /* both */
+    }
+    if (want_capture) {
+        return strcmp(ioid, "Output") != 0;
+    }
+    return strcmp(ioid, "Input") != 0;
+}
+
+static int enumerate_stream(AlsaDeviceList* out, int want_capture) {
+    memset(out, 0, sizeof(*out));
     void** hints = NULL;
     if (snd_device_name_hint(-1, "pcm", &hints) < 0 || !hints) {
-        fprintf(stderr, "Failed to query ALSA PCM hints\n");
+        set_error("Failed to query ALSA PCM device hints");
         return -1;
     }
-    printf("ALSA PCM devices:\n");
+
+    int capacity = 0;
     for (void** h = hints; *h; h++) {
         char* name = snd_device_name_get_hint(*h, "NAME");
         char* desc = snd_device_name_get_hint(*h, "DESC");
         char* ioid = snd_device_name_get_hint(*h, "IOID");
-        if (name) {
-            printf("  %-28s  %-8s  %s%s\n",
-                   name,
-                   ioid ? ioid : "Input/Output",
-                   desc ? desc : "",
-                   looks_like_play3(name) || looks_like_play3(desc) ? "  [Play! 3 candidate]" : "");
+        if (name && !skip_hint_name(name) && hint_matches_stream(ioid, want_capture)) {
+            if (out->count >= capacity) {
+                capacity = capacity ? capacity * 2 : 16;
+                AlsaDeviceInfo* grown =
+                    (AlsaDeviceInfo*)realloc(out->items, (size_t)capacity * sizeof(AlsaDeviceInfo));
+                if (!grown) {
+                    free(name);
+                    free(desc);
+                    free(ioid);
+                    alsa_device_list_free(out);
+                    snd_device_name_free_hint(hints);
+                    set_error("Out of memory enumerating ALSA devices");
+                    return -1;
+                }
+                out->items = grown;
+            }
+            AlsaDeviceInfo* item = &out->items[out->count++];
+            snprintf(item->id, sizeof(item->id), "%s", name);
+            if (desc && desc[0]) {
+                /* First line of DESC is usually the card product name. */
+                char one_line[200];
+                snprintf(one_line, sizeof(one_line), "%s", desc);
+                char* nl = strchr(one_line, '\n');
+                if (nl) {
+                    *nl = '\0';
+                }
+                snprintf(item->label, sizeof(item->label), "%s  [%s]", one_line, name);
+            } else {
+                snprintf(item->label, sizeof(item->label), "%s", name);
+            }
         }
         free(name);
         free(desc);
         free(ioid);
     }
     snd_device_name_free_hint(hints);
+    return 0;
+}
+
+int alsa_enumerate_capture(AlsaDeviceList* out) {
+    return enumerate_stream(out, 1);
+}
+
+int alsa_enumerate_playback(AlsaDeviceList* out) {
+    return enumerate_stream(out, 0);
+}
+
+void alsa_device_list_free(AlsaDeviceList* list) {
+    if (!list) {
+        return;
+    }
+    free(list->items);
+    list->items = NULL;
+    list->count = 0;
+}
+
+int alsa_list_devices(void) {
+    AlsaDeviceList capture = {};
+    AlsaDeviceList playback = {};
+    if (alsa_enumerate_capture(&capture) < 0 || alsa_enumerate_playback(&playback) < 0) {
+        alsa_device_list_free(&capture);
+        alsa_device_list_free(&playback);
+        return -1;
+    }
+    printf("Capture devices:\n");
+    for (int i = 0; i < capture.count; i++) {
+        printf("  %s\n", capture.items[i].label);
+    }
+    printf("Playback devices:\n");
+    for (int i = 0; i < playback.count; i++) {
+        printf("  %s\n", playback.items[i].label);
+    }
+    alsa_device_list_free(&capture);
+    alsa_device_list_free(&playback);
     return 0;
 }
 
@@ -201,63 +314,60 @@ static int configure_stream(snd_pcm_t* pcm,
                             unsigned int* channels_out,
                             unsigned int* period_out,
                             unsigned int* buffer_out) {
+    const char* which = stream == SND_PCM_STREAM_CAPTURE ? "capture" : "playback";
     snd_pcm_hw_params_t* hw = NULL;
     snd_pcm_hw_params_alloca(&hw);
     int err = snd_pcm_hw_params_any(pcm, hw);
     if (err < 0) {
-        fprintf(stderr, "hw_params_any: %s\n", snd_strerror(err));
+        set_error("%s hw_params_any: %s", which, snd_strerror(err));
         return err;
     }
 
     err = snd_pcm_hw_params_set_access(pcm, hw, SND_PCM_ACCESS_RW_INTERLEAVED);
     if (err < 0) {
-        fprintf(stderr, "set_access: %s\n", snd_strerror(err));
+        set_error("%s set_access interleaved: %s", which, snd_strerror(err));
         return err;
     }
     err = snd_pcm_hw_params_set_format(pcm, hw, SND_PCM_FORMAT_S16_LE);
     if (err < 0) {
-        fprintf(stderr, "set_format S16_LE: %s\n", snd_strerror(err));
+        set_error("%s does not support S16_LE: %s", which, snd_strerror(err));
         return err;
     }
 
-    unsigned int rate = cfg->rate;
-    err = snd_pcm_hw_params_set_rate_near(pcm, hw, &rate, 0);
+    /* Exact rate/channels — do not silently renegotiate Milestone 1 format. */
+    err = snd_pcm_hw_params_set_rate(pcm, hw, cfg->rate, 0);
     if (err < 0) {
-        fprintf(stderr, "set_rate: %s\n", snd_strerror(err));
+        set_error("%s does not support %u Hz: %s", which, cfg->rate, snd_strerror(err));
         return err;
     }
-
-    unsigned int channels = cfg->channels;
-    err = snd_pcm_hw_params_set_channels_near(pcm, hw, &channels);
+    err = snd_pcm_hw_params_set_channels(pcm, hw, cfg->channels);
     if (err < 0) {
-        fprintf(stderr, "set_channels: %s\n", snd_strerror(err));
+        set_error("%s does not support %u channels: %s", which, cfg->channels, snd_strerror(err));
         return err;
     }
 
     snd_pcm_uframes_t period = cfg->period_frames;
     err = snd_pcm_hw_params_set_period_size_near(pcm, hw, &period, 0);
     if (err < 0) {
-        fprintf(stderr, "set_period: %s\n", snd_strerror(err));
+        set_error("%s set_period: %s", which, snd_strerror(err));
         return err;
     }
 
     snd_pcm_uframes_t buffer = cfg->buffer_frames;
     err = snd_pcm_hw_params_set_buffer_size_near(pcm, hw, &buffer);
     if (err < 0) {
-        fprintf(stderr, "set_buffer: %s\n", snd_strerror(err));
+        set_error("%s set_buffer: %s", which, snd_strerror(err));
         return err;
     }
 
     err = snd_pcm_hw_params(pcm, hw);
     if (err < 0) {
-        fprintf(stderr, "hw_params (%s): %s\n",
-                stream == SND_PCM_STREAM_CAPTURE ? "capture" : "playback",
-                snd_strerror(err));
+        set_error("%s hw_params apply failed: %s", which, snd_strerror(err));
         return err;
     }
 
-    *rate_out = rate;
-    *channels_out = channels;
+    *rate_out = cfg->rate;
+    *channels_out = cfg->channels;
     *period_out = (unsigned int)period;
     *buffer_out = (unsigned int)buffer;
     return 0;
@@ -267,15 +377,17 @@ static int xrun_recover(snd_pcm_t* pcm, int err, const char* which) {
     fprintf(stderr, "ALSA %s xrun/error: %s — recovering\n", which, snd_strerror(err));
     err = snd_pcm_recover(pcm, err, 1);
     if (err < 0) {
-        fprintf(stderr, "recover failed on %s: %s\n", which, snd_strerror(err));
+        set_error("recover failed on %s: %s", which, snd_strerror(err));
         return err;
     }
     return 0;
 }
 
 AlsaDuplex* alsa_open(const EngineConfig* cfg) {
+    g_last_error[0] = '\0';
     AlsaDuplex* io = (AlsaDuplex*)calloc(1, sizeof(AlsaDuplex));
     if (!io) {
+        set_error("Out of memory opening ALSA duplex");
         return NULL;
     }
     snprintf(io->input_name, sizeof(io->input_name), "%s", cfg->input_dev);
@@ -283,13 +395,13 @@ AlsaDuplex* alsa_open(const EngineConfig* cfg) {
 
     int err = snd_pcm_open(&io->capture, cfg->input_dev, SND_PCM_STREAM_CAPTURE, 0);
     if (err < 0) {
-        fprintf(stderr, "Cannot open capture '%s': %s\n", cfg->input_dev, snd_strerror(err));
+        set_error("Cannot open capture '%s': %s", cfg->input_dev, snd_strerror(err));
         free(io);
         return NULL;
     }
     err = snd_pcm_open(&io->playback, cfg->output_dev, SND_PCM_STREAM_PLAYBACK, 0);
     if (err < 0) {
-        fprintf(stderr, "Cannot open playback '%s': %s\n", cfg->output_dev, snd_strerror(err));
+        set_error("Cannot open playback '%s': %s", cfg->output_dev, snd_strerror(err));
         snd_pcm_close(io->capture);
         free(io);
         return NULL;
@@ -303,10 +415,8 @@ AlsaDuplex* alsa_open(const EngineConfig* cfg) {
         return NULL;
     }
 
-    if (c_rate != p_rate || c_ch != p_ch) {
-        fprintf(stderr,
-                "Capture/playback format mismatch: capture %u Hz %u ch, playback %u Hz %u ch\n",
-                c_rate, c_ch, p_rate, p_ch);
+    if (c_rate != cfg->rate || c_ch != cfg->channels || p_rate != cfg->rate || p_ch != cfg->channels) {
+        set_error("Device renegotiated format (wanted %u Hz %u ch)", cfg->rate, cfg->channels);
         alsa_close(io);
         return NULL;
     }

@@ -11,14 +11,26 @@ typedef struct {
     char input_dev[128];
     char output_dev[128];
     unsigned int rate;
-    unsigned int channels; /* default 2 — stereo pass-through, no downmix */
+    unsigned int channels; /* Milestone 1: must be 2 */
     unsigned int period_frames;
     unsigned int buffer_frames;
-    float mic_gain;  /* linear amplitude multiplier on capture */
-    float amp_gain;  /* linear amplitude multiplier before playback */
+    float mic_gain;
+    float amp_gain;
     int list_only;
     int verbose;
+    int use_gui;
+    int use_cli;
 } EngineConfig;
+
+typedef struct {
+    char id[128];    /* ALSA PCM name passed to snd_pcm_open */
+    char label[256]; /* human-readable label for the GUI */
+} AlsaDeviceInfo;
+
+typedef struct {
+    AlsaDeviceInfo* items;
+    int count;
+} AlsaDeviceList;
 
 typedef struct AlsaDuplex AlsaDuplex;
 
@@ -27,11 +39,16 @@ int engine_parse_args(int argc, char** argv, EngineConfig* cfg);
 void engine_print_usage(const char* argv0);
 
 int alsa_list_devices(void);
+int alsa_enumerate_capture(AlsaDeviceList* out);
+int alsa_enumerate_playback(AlsaDeviceList* out);
+void alsa_device_list_free(AlsaDeviceList* list);
+
 AlsaDuplex* alsa_open(const EngineConfig* cfg);
 void alsa_close(AlsaDuplex* io);
 int alsa_read(AlsaDuplex* io, int16_t* interleaved, unsigned int frame_count);
 int alsa_write(AlsaDuplex* io, const int16_t* interleaved, unsigned int frame_count);
 void alsa_print_info(const AlsaDuplex* io);
+const char* alsa_last_error(void);
 
 unsigned int alsa_period_frames(const AlsaDuplex* io);
 unsigned int alsa_channels(const AlsaDuplex* io);
