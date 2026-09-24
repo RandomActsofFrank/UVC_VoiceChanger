@@ -1,31 +1,56 @@
 # UVC VoiceChanger
 
-Raspberry Pi port of the [s60sc ESP32 VoiceChanger](https://github.com/s60sc/ESP32_VoiceChanger). A Sound Blaster Play 3 is the microphone and the headphone output.
+ESP32/ESP32-S3 cosplay voice changer by [s60sc](https://github.com/s60sc/ESP32_VoiceChanger), plus a Linux port for Raspberry Pi + Sound Blaster Play! 3.
 
-`ESP/` is the original ESP32 Arduino sketch, kept as a reference. The Pi app is at the repo root.
+| Path | Contents |
+|------|----------|
+| [`ESP/`](ESP/) | Original Arduino firmware (unchanged reference) |
+| [`linux/`](linux/) | Pi audio engine (Milestone 1: ALSA stereo pass-through) |
 
-Same filters as the ESP32 build: low cut, high cut, band pass, shelves, peak, ring mod, clip, reverb, and pitch shift.
+## Milestone 1 — ALSA stereo pass-through
 
-Audio runs at 48 kHz, which is the Play 3's usual USB rate. Filter frequencies are still in Hz, so the radio and dalek settings from the ESP README mean the same thing. Reverb is 100 ms, the same delay the ESP32 used (1600 samples at 16 kHz).
+Goal: prove USB audio in and out on a Pi 4 before porting the existing DSP.
 
-Record stores the dry microphone, after mic gain and before the filters. Play and Download run that recording through the filters that are on right now.
-
-## Install on the Pi
-
-```bash
-sudo apt install python3-pip python3-venv portaudio19-dev
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m uvc
+```
+Play! 3 mic  →  ALSA capture  →  gain  →  ALSA playback  →  Play! 3 headphones
 ```
 
-Plug the Play 3 in before starting. Open `http://<pi-address>:8080`.
+- Default **48 kHz**, **2 channels** (stereo). No mono downmix.
+- Configurable rate, channels, period, buffer, devices, gains.
+- ALSA XRUN recovery and level diagnostics.
+- **No** DSP, web UI, GUI, or pitch shift yet.
 
-Pass-through starts on its own. Mic gain 3 and amp volume 3 are unity, matching the original sliders. Radio and Dalek load the example settings from the ESP32 readme.
+### Build on Raspberry Pi OS 64-bit
 
-If the dongle is missing, the app uses the default sound device and the page says the Play 3 was not found.
+```bash
+sudo apt update
+sudo apt install build-essential libasound2-dev
+cd linux
+make
+```
+
+### Run
+
+```bash
+# See devices (Play! 3 candidates are marked)
+./uvc_pass --list
+
+# Auto-pick Play! 3 if the name matches, else use default
+./uvc_pass
+
+# Explicit devices
+./uvc_pass --input plughw:1,0 --output plughw:1,0 --rate 48000 --channels 2
+
+# Gains (linear)
+./uvc_pass --mic-gain 1.5 --amp-gain 0.8
+```
+
+Ctrl+C stops. Peak/RMS levels print about once per second.
+
+### Later milestones (not started)
+
+Port `ESP/Biquad.*` and `ESP/Filters.cpp` with the same processing order as the firmware. Leave `smbPitchShift.cpp` disabled until pass-through and DSP are solid.
 
 ## License
 
-AGPL-3.0, same as the ESP32 original. The pitch shifter keeps Stephan Bernsee's Wide Open License notice. The biquad keeps Nigel Redmon's notice.
+AGPL-3.0 (same as the ESP32 original). Biquad and pitch-shift third-party notices remain in `ESP/`.
