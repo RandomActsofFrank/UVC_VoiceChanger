@@ -1,0 +1,5 @@
+original source/
+pi/.venv/
+__pycache__/
+*.pyc
+.DS_Store
