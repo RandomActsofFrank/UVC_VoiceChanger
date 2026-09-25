@@ -110,6 +110,8 @@ struct FxParams {
     float vt_formant;   /* formant scale: >1 smaller/brighter tract, <1 larger */
     float vt_resonance; /* -1 softer .. +1 sharper, more resonant formants */
     float vt_mix;       /* 0 = classic pitch path only, 1 = vocal model only */
+
+    float out_db; /* output level, just before the limiter */
 };
 
 /* A/B listening mode (not saved in presets). */
@@ -156,6 +158,7 @@ void fx_clamp(FxParams* p);
  *          wet: resonators -> saturator -> helmet/comms --+-> char_mix
  *        -> final shelf EQ
  *   -> soft clip                                  (classic)
+ *   -> output level
  *   -> soft limiter                               (lim_on)
  *   -> int16
  *
@@ -169,8 +172,9 @@ void fx_clamp(FxParams* p);
  * Voice changes (a different preset id, or a different A/B mode) are
  * crossfaded: the next block fades out on the old voice, the new
  * parameters are applied, the delay tails are cleared, and the block
- * after that fades in. Slider edits ("custom") apply immediately and
- * keep all state.
+ * after that fades in. Any other change (slider edits, personal tuning)
+ * glides: every float parameter moves toward its new value over ~20 ms,
+ * re-applied once per audio period, keeping all filter/delay state.
  */
 class VoiceChain {
 public:
@@ -211,6 +215,7 @@ private:
     };
 
     void apply(const FxParams& p);
+    void glide_step();
     void reset_voice_state();
     float pitch_sample(PitchState& s, float x);
     float character_sample(Channel& c, float x, float am_sine);
@@ -220,6 +225,8 @@ private:
     std::vector<Channel> ch_;
     FxParams p_{};
     FxParams pending_{};
+    FxParams target_{};
+    bool gliding_ = false;
     bool has_pending_ = false;
     bool fading_in_ = false;
     bool configured_ = false;
@@ -232,4 +239,5 @@ private:
     float am_step_ = 0.0f;
     float pitch_step_ = 0.0f;
     float clip_factor_ = 1.0f;
+    float out_gain_ = 1.0f;
 };

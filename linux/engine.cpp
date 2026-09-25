@@ -6,6 +6,28 @@
 
 PassEngine::PassEngine() {
     fx_apply_preset("clean", &fx_);
+    tune_defaults(&tune_);
+}
+
+void PassEngine::set_tune(const TuneParams& tune) {
+    std::lock_guard<std::mutex> lock(mu_);
+    tune_ = tune;
+    tune_clamp(&tune_);
+    fx_version_++;
+}
+
+void PassEngine::set_voice(const FxParams& fx, const TuneParams& tune) {
+    std::lock_guard<std::mutex> lock(mu_);
+    fx_ = fx;
+    fx_clamp(&fx_);
+    tune_ = tune;
+    tune_clamp(&tune_);
+    fx_version_++;
+}
+
+TuneParams PassEngine::tune() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return tune_;
 }
 
 void PassEngine::set_fx(const FxParams& fx) {
@@ -142,7 +164,14 @@ void PassEngine::loop() {
     while (run_.load()) {
         const unsigned int fx_now = fx_version_.load();
         if (fx_now != fx_seen) {
-            chain.configure(fx(), mode_.load());
+            FxParams character;
+            TuneParams tune;
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                character = fx_;
+                tune = tune_;
+            }
+            chain.configure(fx_apply_tuning(character, tune), mode_.load());
             fx_seen = fx_now;
         }
 

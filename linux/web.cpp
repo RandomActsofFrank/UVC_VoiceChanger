@@ -73,6 +73,14 @@ label.opt input{width:auto;margin-right:.4em}
 details{margin-top:2em;border-top:1px solid #333;padding-top:1em}
 summary{cursor:pointer;font-weight:600;color:#aaa}
 h3{font-size:1em;margin:1.5em 0 .2em;color:#aaa}
+.trow{display:flex;gap:.5em}
+.trow select{flex:2}
+.trow button{flex:1}
+#tunebox{margin-top:.5em;padding:.2em .8em .8em;border:1px solid #333;border-radius:6px}
+#tunebox .knob{grid-template-columns:7.5em 1fr 3.5em}
+p.hint{color:#aaa;font-size:.85em}
+#tunemsg{margin-top:.4em;min-height:1em;color:#aaa;font-size:.9em}
+#tunemsg.err{color:#f66;border:0}
 .knob.sub{grid-template-columns:8.5em 1fr;color:#aaa}
 .knob.sub input{width:auto;justify-self:start}
 </style>
@@ -85,6 +93,24 @@ h3{font-size:1em;margin:1.5em 0 .2em;color:#aaa}
 <div class="voices" id="voices"></div>
 <label for="more">More voices</label>
 <select id="more"></select>
+<label for="tuning">Tuning</label>
+<div class="trow">
+<select id="tuning"></select>
+<button id="finetune">Fine tune</button>
+</div>
+<div id="tunebox" hidden>
+<p class="hint">Adapts the voice to your own voice. Centre = the voice as designed. Double-tap a slider to centre it.</p>
+<div id="tunes"></div>
+<div class="row">
+<button id="tsave">Save</button>
+<button id="tsaveas">Save as new&hellip;</button>
+</div>
+<div class="row">
+<button id="trevert">Undo changes</button>
+<button id="tdelete">Delete tuning</button>
+</div>
+</div>
+<div id="tunemsg"></div>
 <label class="opt"><input type="checkbox" id="startup">Load this voice at startup</label>
 <div id="startupmsg"></div>
 
@@ -120,6 +146,7 @@ h3{font-size:1em;margin:1.5em 0 .2em;color:#aaa}
 <div id="fxmsg"></div>
 <label class="on"><input type="checkbox" id="enabled">Effects on</label>
 <div class="knob"><span>Volume dB</span><input type="range" id="volume_db" aria-label="Volume dB" min="-24" max="12" step="0.5"><span class="val" id="volume_db_v"></span></div>
+<div class="knob"><span>Output dB</span><input type="range" id="out_db" aria-label="Output dB" min="-24" max="12" step="0.5"><span class="val" id="out_db_v"></span></div>
 <div id="fx"></div>
 </details>
 <script>
@@ -267,7 +294,7 @@ const FX = [
     ['lim_ceiling_db', 'Ceiling dB', -12, 0, 0.5],
     ['lim_release_ms', 'Release ms', 5, 1000, 5]]},
 ];
-const KEYS = ['enabled', 'volume_db'];
+const KEYS = ['enabled', 'volume_db', 'out_db'];
 let sendTimer = null;
 
 function buildFx() {
@@ -315,6 +342,7 @@ function buildFx() {
   }
   $('enabled').onchange = fxChanged;
   $('volume_db').oninput = fxChanged;
+  $('out_db').oninput = fxChanged;
 }
 
 function updateLabels() {
@@ -363,6 +391,7 @@ function showFx(d) {
     else el.value = d.fx[k];
   }
   mode = d.mode;
+  showTune(d);
   renderVoices();
   updateAb();
   updateLabels();
@@ -399,9 +428,10 @@ function updateActive() {
   const p = presetById(cur);
   const a = $('active');
   a.className = p ? '' : 'custom';
-  a.textContent = p ? p.name : customLabel();
+  a.textContent = (p ? p.name : customLabel()) + ' \u00b7 ' + (tuneState.name || 'Default');
   const note = [];
-  if (!p) note.push('Tuned by hand in Advanced; save it to keep it.');
+  if (!p) note.push('Voice edited in Advanced; save it to keep it.');
+  if (tuneState.edited) note.push('Tuning changed; Save to keep it.');
   if (mode !== 2) note.push('A/B compare is set to ' + MODE_NAMES[mode] + ' (Advanced).');
   if (note.length) {
     const s = document.createElement('small');
@@ -414,9 +444,157 @@ function updateActive() {
   }
 }
 
+const TUNE = [
+  ['pitch', 'Pitch', -6, 6, 0.5],
+  ['character', 'Character', -1, 1, 0.05],
+  ['body', 'Body', -1, 1, 0.05],
+  ['presence', 'Presence', -1, 1, 0.05],
+  ['mechanical', 'Mechanical', -1, 1, 0.05],
+  ['helmet', 'Helmet / Cavity', -1, 1, 0.05],
+  ['saturation', 'Saturation', -1, 1, 0.05],
+  ['wet', 'Wet / Dry', -1, 1, 0.05],
+  ['output_db', 'Output', -12, 12, 0.5],
+];
+let tuneState = {name: '', names: [], edited: false, voice: ''};
+let tuneTimer = null;
+
+function fmtTune(key, v) {
+  v = +v;
+  const sign = v > 0 ? '+' : '';
+  if (key === 'pitch') return sign + v + ' st';
+  if (key === 'output_db') return sign + v + ' dB';
+  return sign + Math.round(v * 100);
+}
+
+function buildTune() {
+  for (const [key, label, min, max, step] of TUNE) {
+    const row = document.createElement('div');
+    row.className = 'knob';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const r = document.createElement('input');
+    Object.assign(r, {type: 'range', id: 't_' + key, min: min, max: max, step: step, value: 0});
+    r.setAttribute('aria-label', 'Tuning ' + label);
+    r.oninput = tuneChanged;
+    r.ondblclick = () => { r.value = 0; tuneChanged(); };
+    const v = document.createElement('span');
+    v.className = 'val';
+    v.id = 't_' + key + '_v';
+    row.append(name, r, v);
+    $('tunes').appendChild(row);
+  }
+}
+
+function tuneLabels() {
+  for (const [key] of TUNE) $('t_' + key + '_v').textContent = fmtTune(key, $('t_' + key).value);
+}
+
+function updateTuneUi() {
+  const has = !!tuneState.voice;
+  const sel = $('tuning');
+  sel.disabled = !has;
+  for (const o of sel.options) {
+    o.textContent = (o.value || 'Default') + (o.value === tuneState.name && tuneState.edited ? ' (edited)' : '');
+  }
+  $('tsave').textContent = tuneState.name ? 'Save to ' + tuneState.name : 'Save\u2026';
+  $('tsave').disabled = !has;
+  $('tsaveas').disabled = !has;
+  $('trevert').disabled = !tuneState.edited;
+  $('tdelete').disabled = !tuneState.name;
+}
+
+function showTune(d) {
+  tuneState = {name: d.tuning, names: d.tunings, edited: d.tune_edited, voice: d.base};
+  const sel = $('tuning');
+  sel.innerHTML = '';
+  sel.appendChild(new Option('Default', ''));
+  for (const n of d.tunings) sel.appendChild(new Option(n, n));
+  sel.value = d.tuning;
+  if (!tuneTimer) {
+    for (const [key] of TUNE) $('t_' + key).value = d.tune[key];
+  }
+  tuneLabels();
+  updateTuneUi();
+  $('tunemsg').textContent = '';
+}
+
+function tuneChanged() {
+  tuneLabels();
+  tuneState.edited = true;
+  updateTuneUi();
+  updateActive();
+  clearTimeout(tuneTimer);
+  tuneTimer = setTimeout(sendTune, 60);
+}
+
+function sendTune() {
+  tuneTimer = null;
+  return api('/api/tune', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: TUNE.map(([k]) => k + '=' + encodeURIComponent($('t_' + k).value)).join('&')
+  });
+}
+
+async function flushTune() {
+  if (tuneTimer) {
+    clearTimeout(tuneTimer);
+    await sendTune();
+  }
+}
+
+async function tunePost(path, body) {
+  const d = await api(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: body
+  });
+  showFx(d);
+  $('tunemsg').textContent = d.error || d.message || '';
+  $('tunemsg').className = d.error ? 'err' : '';
+}
+
+async function saveTuneAs() {
+  const name = (prompt('Name for this tuning (e.g. your name):') || '').trim();
+  if (!name) return;
+  if (tuneState.names.some(n => n.toLowerCase() === name.toLowerCase()) &&
+      !confirm('"' + name + '" already exists for this voice. Overwrite it?')) return;
+  await flushTune();
+  tunePost('/api/tuning/save', 'name=' + encodeURIComponent(name));
+}
+
+$('tuning').onchange = () => {
+  clearTimeout(tuneTimer);
+  tuneTimer = null;
+  tunePost('/api/tuning/select', 'name=' + encodeURIComponent($('tuning').value));
+};
+$('finetune').onclick = () => {
+  const box = $('tunebox');
+  box.hidden = !box.hidden;
+  $('finetune').textContent = box.hidden ? 'Fine tune' : 'Hide';
+};
+$('tsave').onclick = async () => {
+  if (!tuneState.name) return saveTuneAs();
+  await flushTune();
+  tunePost('/api/tuning/save', 'name=' + encodeURIComponent(tuneState.name));
+};
+$('tsaveas').onclick = saveTuneAs;
+$('trevert').onclick = () => {
+  clearTimeout(tuneTimer);
+  tuneTimer = null;
+  tunePost('/api/tuning/select', 'name=' + encodeURIComponent(tuneState.name));
+};
+$('tdelete').onclick = () => {
+  if (tuneState.name && confirm('Delete tuning "' + tuneState.name + '"?')) {
+    tunePost('/api/tuning/delete', 'name=' + encodeURIComponent(tuneState.name));
+  }
+};
+
 function selectVoice(id) {
   clearTimeout(sendTimer);
   sendTimer = null;
+  clearTimeout(tuneTimer);
+  tuneTimer = null;
   $('preset').value = id;
   updateActive();
   presetPost('/api/fx', 'preset=' + encodeURIComponent(id));
@@ -558,6 +736,7 @@ $('preset').onchange = () => {
 };
 
 buildFx();
+buildTune();
 api('/api/fx').then(showFx);
 api('/api/settings').then(showSettings);
 refresh();
@@ -683,6 +862,30 @@ std::string fx_json(const FxParams& fx) {
     return out + "}";
 }
 
+std::string tune_json(const TuneParams& t) {
+    int count = 0;
+    const FxField* fields = tune_fields(&count);
+    std::string out = "{";
+    for (int i = 0; i < count; i++) {
+        char val[32];
+        snprintf(val, sizeof(val), "%g", *(const float*)((const char*)&t + fields[i].offset));
+        out += std::string(i ? ",\"" : "\"") + fields[i].key + "\":" + val;
+    }
+    return out + "}";
+}
+
+void tune_from_form(const std::string& body, TuneParams* t) {
+    int count = 0;
+    const FxField* fields = tune_fields(&count);
+    for (int i = 0; i < count; i++) {
+        std::string v;
+        if (form_find(body, fields[i].key, &v)) {
+            *(float*)((char*)t + fields[i].offset) = strtof(v.c_str(), nullptr);
+        }
+    }
+    tune_clamp(t);
+}
+
 /* Apply any fields present in a form body; missing fields keep their value. */
 void fx_from_form(const std::string& body, FxParams* fx) {
     int count = 0;
@@ -805,6 +1008,7 @@ public:
     explicit WebServer(const EngineConfig& defaults)
         : cfg_(defaults),
           store_(defaults.presets_path),
+          tunes_(tunings_path_for(defaults.presets_path)),
           settings_path_(settings_path_for(defaults.presets_path)) {
         cfg_.rate = 48000;
         cfg_.channels = 2;
@@ -815,8 +1019,8 @@ public:
         }
         FxParams fx;
         if (store_.get(cfg_.preset, &fx)) {
-            engine_.set_fx(fx);
             base_ = cfg_.preset;
+            engine_.set_voice(fx, active_tune(base_));
         }
         if (settings_.autostart) {
             fprintf(stderr, "Autostart on: starting audio with %s -> %s\n", cfg_.input_dev, cfg_.output_dev);
@@ -872,6 +1076,18 @@ public:
         } else if (req.method == "POST" && req.path == "/api/fx") {
             update_fx(req.body);
             send_response(fd, 200, "OK", json, fx_response());
+        } else if (req.method == "POST" && req.path == "/api/tune") {
+            TuneParams t = engine_.tune();
+            tune_from_form(req.body, &t);
+            engine_.set_tune(t);
+            tune_edited_ = true;
+            send_response(fd, 200, "OK", json, "{\"tune_edited\":true}");
+        } else if (req.method == "POST" && req.path == "/api/tuning/select") {
+            send_response(fd, 200, "OK", json, select_tuning(form_value(req.body, "name")));
+        } else if (req.method == "POST" && req.path == "/api/tuning/save") {
+            send_response(fd, 200, "OK", json, save_tuning(form_value(req.body, "name")));
+        } else if (req.method == "POST" && req.path == "/api/tuning/delete") {
+            send_response(fd, 200, "OK", json, delete_tuning(form_value(req.body, "name")));
         } else if (req.method == "POST" && req.path == "/api/mode") {
             engine_.set_mode(atoi(form_value(req.body, "mode").c_str()));
             send_response(fd, 200, "OK", json, fx_response());
@@ -925,7 +1141,15 @@ private:
                    ",\"modified\":" + (p.modified ? "true" : "false") +
                    ",\"voice\":" + (p.voice ? "true" : "false") + "}";
         }
-        return out + "],\"mode\":" + std::to_string(engine_.mode()) + ",\"base\":\"" + json_escape(base_) +
+        out += "],\"tunings\":[";
+        first = true;
+        for (const std::string& n : tunes_.names(base_)) {
+            out += std::string(first ? "\"" : ",\"") + json_escape(n) + "\"";
+            first = false;
+        }
+        out += "],\"tuning\":\"" + json_escape(tune_name_) + "\",\"tune_edited\":" +
+               (tune_edited_ ? "true" : "false") + ",\"tune\":" + tune_json(engine_.tune());
+        return out + ",\"mode\":" + std::to_string(engine_.mode()) + ",\"base\":\"" + json_escape(base_) +
                "\",\"error\":\"" + json_escape(error) +
                "\",\"message\":\"" + json_escape(message) + "\",\"fx\":" + fx_json(engine_.fx()) + "}";
     }
@@ -938,11 +1162,65 @@ private:
                 return;
             }
             base_ = preset;
-        } else {
-            fx_from_form(body, &fx);
-            snprintf(fx.preset, sizeof(fx.preset), "%s", "custom");
+            engine_.set_voice(fx, active_tune(base_));
+            return;
         }
+        fx_from_form(body, &fx);
+        snprintf(fx.preset, sizeof(fx.preset), "%s", "custom");
         engine_.set_fx(fx);
+    }
+
+    /* The voice's remembered tuning (Default if none); updates tune_name_. */
+    TuneParams active_tune(const std::string& preset) {
+        TuneParams t;
+        tune_name_ = tunes_.active(preset);
+        if (!tunes_.get(preset, tune_name_, &t)) {
+            tune_name_.clear();
+            tune_defaults(&t);
+        }
+        tune_edited_ = false;
+        return t;
+    }
+
+    std::string select_tuning(const std::string& name) {
+        TuneParams t;
+        if (!tunes_.get(base_, name, &t)) {
+            return fx_response("Unknown tuning: " + name);
+        }
+        std::string err;
+        if (!tunes_.set_active(base_, name, &err)) {
+            return fx_response(err);
+        }
+        tune_name_ = name;
+        tune_edited_ = false;
+        engine_.set_tune(t);
+        return fx_response();
+    }
+
+    std::string save_tuning(const std::string& name) {
+        std::string err;
+        const std::string stored = tunes_.save(base_, name, engine_.tune(), &err);
+        if (stored.empty()) {
+            return fx_response(err);
+        }
+        tune_name_ = stored;
+        tune_edited_ = false;
+        return fx_response("", "Saved tuning \"" + stored + "\" for " + preset_name(base_) + ".");
+    }
+
+    std::string delete_tuning(const std::string& name) {
+        std::string err;
+        if (!tunes_.remove(base_, name, &err)) {
+            return fx_response(err);
+        }
+        if (tune_name_ == name) {
+            TuneParams t;
+            tune_defaults(&t);
+            engine_.set_tune(t);
+            tune_name_.clear();
+            tune_edited_ = false;
+        }
+        return fx_response("", "Deleted tuning \"" + name + "\".");
     }
 
     std::string preset_name(const std::string& id) {
@@ -959,6 +1237,11 @@ private:
         FxParams fx = engine_.fx();
         snprintf(fx.preset, sizeof(fx.preset), "%s", id.c_str());
         engine_.set_fx(fx);
+        if (base_ != id) {
+            /* The current tuning now sits on a different voice, unsaved there. */
+            tune_name_.clear();
+            tune_edited_ = true;
+        }
         base_ = id;
     }
 
@@ -1106,6 +1389,9 @@ private:
 
     EngineConfig cfg_;
     PresetStore store_;
+    TuneStore tunes_;
+    std::string tune_name_;    /* personal tuning in use for base_; "" = Default */
+    bool tune_edited_ = false; /* tuning sliders moved since load/save */
     std::string settings_path_;
     AppSettings settings_;
     std::string base_; /* preset the current settings came from */

@@ -4,7 +4,7 @@ CXX      ?= g++
 CXXFLAGS ?= -O2 -Wall -Wextra -std=c++17
 LDFLAGS  ?= -lasound -lm -pthread
 
-SRCS = main.cpp alsa_io.cpp engine.cpp web.cpp dsp.cpp character.cpp biquad.cpp presets.cpp settings.cpp
+SRCS = main.cpp alsa_io.cpp engine.cpp web.cpp dsp.cpp character.cpp tuning.cpp biquad.cpp presets.cpp settings.cpp
 OBJS = $(SRCS:.cpp=.o)
 BIN  = uvc_pass
 
@@ -15,7 +15,7 @@ all: $(BIN)
 $(BIN): $(OBJS)
 	$(CXX) -o $@ $^ $(LDFLAGS)
 
-%.o: %.cpp alsa_io.h engine.h web.h dsp.h character.h biquad.h presets.h settings.h
+%.o: %.cpp alsa_io.h engine.h web.h dsp.h character.h tuning.h biquad.h presets.h settings.h
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 clean:

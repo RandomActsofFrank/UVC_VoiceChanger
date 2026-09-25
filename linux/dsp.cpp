@@ -100,6 +100,7 @@ const FxField kFields[] = {
     FX_FIELD(kFxFloat, vt_formant),
     FX_FIELD(kFxFloat, vt_resonance),
     FX_FIELD(kFxFloat, vt_mix),
+    FX_FIELD(kFxFloat, out_db),
 };
 
 /* To add a character voice (e.g. Chopper): add a row here with voice = true
@@ -587,6 +588,7 @@ void fx_clamp(FxParams* p) {
     p->vt_formant = clampf(p->vt_formant, 0.7f, 1.5f);
     p->vt_resonance = clampf(p->vt_resonance, -1.0f, 1.0f);
     p->vt_mix = clampf(p->vt_mix, 0.0f, 1.0f);
+    p->out_db = clampf(p->out_db, -24.0f, 12.0f);
 }
 
 VoiceChain::VoiceChain(unsigned int rate, unsigned int channels)
@@ -623,8 +625,47 @@ void VoiceChain::configure(const FxParams& in, int mode) {
         has_pending_ = true;
         return;
     }
-    apply(e);
-    configured_ = true;
+    if (!configured_) {
+        apply(e);
+        target_ = e;
+        configured_ = true;
+        return;
+    }
+    target_ = e;
+    gliding_ = true;
+}
+
+/* One glide step per audio period: floats move ~30% of the way to the
+   target (about 20 ms to settle), switches and counts change at once. */
+void VoiceChain::glide_step() {
+    FxParams cur = target_;
+    bool done = true;
+    int count = 0;
+    const FxField* fields = fx_fields(&count);
+    for (int i = 0; i < count; i++) {
+        if (fields[i].kind != kFxFloat) {
+            continue;
+        }
+        const float from = *(const float*)((const char*)&p_ + fields[i].offset);
+        float* to = (float*)((char*)&cur + fields[i].offset);
+        const float d = *to - from;
+        if (fabsf(d) > 1.0e-4f * (fabsf(*to) + 1.0f)) {
+            *to = from + 0.3f * d;
+            done = false;
+        }
+    }
+    if (!done) {
+        /* Stages switching off stay on until their mix/level has glided out. */
+        for (int i = 0; i < count; i++) {
+            if (fields[i].kind == kFxBool && *(const bool*)((const char*)&p_ + fields[i].offset)) {
+                *(bool*)((char*)&cur + fields[i].offset) = true;
+            }
+        }
+    }
+    apply(cur);
+    if (done) {
+        gliding_ = false;
+    }
 }
 
 void VoiceChain::apply(const FxParams& in) {
@@ -692,6 +733,7 @@ void VoiceChain::apply(const FxParams& in) {
     const float ratio = powf(2.0f, p_.pitch_semitones / 12.0f);
     pitch_step_ = (1.0f - ratio) / (kPitchWindowSec * sr);
     clip_factor_ = 1.0f + p_.clip_factor / 6.0f;
+    out_gain_ = powf(10.0f, p_.out_db / 20.0f);
 }
 
 /* Clear delay tails so the previous voice doesn't bleed into the new one.
@@ -766,6 +808,9 @@ void VoiceChain::process(int16_t* interleaved, unsigned int frames) {
     if (frames == 0) {
         return;
     }
+    if (gliding_ && !has_pending_) {
+        glide_step();
+    }
     const bool fx = p_.enabled;
     const bool character = fx && p_.character_on;
     const bool am_on = character && p_.helmet_on && p_.helmet_am_depth > 0.0f;
@@ -824,6 +869,7 @@ void VoiceChain::process(int16_t* interleaved, unsigned int frames) {
                     const float cx = x * clip_factor_;
                     x = (cx / (1.0f + 0.28f * cx * cx)) / clip_factor_;
                 }
+                x *= out_gain_;
                 if (p_.lim_on) {
                     x = c.lim.process(x);
                 }
@@ -857,6 +903,8 @@ void VoiceChain::process(int16_t* interleaved, unsigned int frames) {
 
     if (has_pending_) {
         apply(pending_);
+        target_ = pending_;
+        gliding_ = false;
         reset_voice_state();
         has_pending_ = false;
         fading_in_ = true;

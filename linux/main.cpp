@@ -46,7 +46,12 @@ static int run_cli(EngineConfig& cfg) {
     PassEngine engine;
     FxParams fx;
     PresetStore(cfg.presets_path).get(cfg.preset, &fx);
-    engine.set_fx(fx);
+    const TuneStore tunes(tunings_path_for(cfg.presets_path));
+    TuneParams tune;
+    if (!tunes.get(cfg.preset, tunes.active(cfg.preset), &tune)) {
+        tune_defaults(&tune);
+    }
+    engine.set_voice(fx, tune);
     g_cli_engine = &engine;
     if (!engine.start(cfg)) {
         fprintf(stderr, "Start failed: %s\n", engine.last_error().c_str());

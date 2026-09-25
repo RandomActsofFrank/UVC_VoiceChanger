@@ -2,6 +2,7 @@
 
 #include "alsa_io.h"
 #include "dsp.h"
+#include "tuning.h"
 
 #include <atomic>
 #include <mutex>
@@ -18,9 +19,14 @@ public:
     void stop();
     bool running() const;
 
-    /* Safe to call while running; applied at the next audio period. */
+    /* Safe to call while running; applied at the next audio period.
+       fx = character (preset) parameters; tune = personal tuning on top. */
     void set_fx(const FxParams& fx);
     FxParams fx() const;
+    void set_tune(const TuneParams& tune);
+    TuneParams tune() const;
+    /* Both at once, so a voice switch lands with its tuning in one crossfade. */
+    void set_voice(const FxParams& fx, const TuneParams& tune);
     /* A/B listening mode (FxMode); not saved. */
     void set_mode(int mode);
     int mode() const { return mode_.load(); }
@@ -44,6 +50,7 @@ private:
     std::atomic<unsigned long long> blocks_{0};
     std::atomic<unsigned long long> xruns_{0};
     FxParams fx_{};
+    TuneParams tune_{};
     std::atomic<unsigned int> fx_version_{0};
     std::atomic<int> mode_{kFxModeCharacter};
 };

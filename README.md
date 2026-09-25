@@ -44,6 +44,27 @@ The top of the page is the voice picker: tap **Clean / Bypass**, **DJ R3X**, **D
 
 Adding a new character later (e.g. Chopper) is one row in `kPresets` plus one branch in `fx_apply_preset()` in `linux/dsp.cpp`.
 
+### Personal tuning
+
+A voice defines the **character**; a **tuning** adapts that character to the person wearing the costume. Under the voice buttons:
+
+- **Tuning** — pick **Default** (the voice exactly as designed) or one of your saved tunings, e.g. **Frank**. Each voice remembers which tuning you last used, so tapping **DJ R3X** brings back your R3X tuning (also at boot).
+- **Fine tune** — opens nine broad controls. Centre is always "as designed"; double-tap a slider to re-centre it.
+
+| Control | What it moves |
+|---------|---------------|
+| Pitch | Pitch in semitones (with the vocal model, formants stay put) |
+| Character | Vocal-tract size and resonance — smaller/brighter vs larger/darker head |
+| Body | Low end: high-pass corner, low/mid resonances, low shelf |
+| Presence | Upper mids/top: presence peak, low-pass corner, upper resonances, high shelf, helmet top |
+| Mechanical | Ring modulation, metallic comb, resonance sharpness |
+| Helmet / Cavity | Helmet band-limit and short reflections (adds a helmet if the voice has none) |
+| Saturation | The voice's grit stage (saturation or clipping), or a tanh stage faded in |
+| Wet / Dry | How much of the character processing is mixed in |
+| Output | Output level before the limiter |
+
+**Save to …** updates the selected tuning, **Save as new…** creates one (e.g. your name), **Undo changes** reloads it, **Delete tuning** removes it. Tunings never change the voice preset itself. They live in `~/.config/uvc-voicechanger/tunings.ini`. Tuning changes glide over ~20 ms, so moving sliders while talking doesn't click.
+
 ### Advanced: DSP tuning
 
 The collapsed **Advanced** section holds every DSP control, preset save/restore, and an **A/B compare** switch: **Bypass** (dry), **Classic DSP** (the original chain only, all character stages off) and **Character DSP** (everything). The A/B setting is not saved.
@@ -65,6 +86,7 @@ input gain
       wet: resonators → saturation → helmet ────┴→ wet mix
     → final shelf EQ
 → soft clip                                         (classic)
+→ output level
 → soft limiter (safety)
 → 16-bit out
 ```
