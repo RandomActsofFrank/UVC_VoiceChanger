@@ -151,7 +151,8 @@ void fx_clamp(FxParams* p);
  *   -> pitch shift                                (classic)
  *      [vt_on] in parallel: vocal-tract analysis -> pitch shift of the
  *      excitation only -> resynthesis with the reshaped tract; blended
- *      with the classic pitch path by vt_mix
+ *      with the classic pitch path by vt_mix; below speech level it hands
+ *      back to the classic path so background noise isn't resynthesised
  *   -> [character_on]
  *        vocal character -> compressor -> split:
  *          dry ------------------------------------------+
@@ -207,6 +208,8 @@ private:
         float vt_ref_env = 0.0f; /* level guard: classic-path peak envelope */
         float vt_out_env = 0.0f; /* level guard: vocal-model peak envelope */
         float vt_guard = 1.0f;
+        float vt_gate_env = 0.0f; /* noise gate: input peak envelope */
+        float vt_gate = 0.0f;     /* noise gate: vocal-model blend weight 0..1 */
         CombDelay comb;
         VocalCharacter vocal;
         Compressor comp;
@@ -245,4 +248,7 @@ private:
     float out_gain_ = 1.0f;
     float env_decay_ = 0.0f;     /* level guard envelope decay per sample (~15 ms) */
     float guard_release_ = 0.0f; /* level guard recovery per sample (~30 ms) */
+    float gate_decay_ = 0.0f;    /* noise gate envelope decay per sample (~60 ms) */
+    float gate_attack_ = 0.0f;   /* noise gate opening per sample (~5 ms) */
+    float gate_release_ = 0.0f;  /* noise gate closing per sample (~120 ms) */
 };

@@ -742,6 +742,9 @@ void VoiceChain::apply(const FxParams& in) {
     out_gain_ = powf(10.0f, p_.out_db / 20.0f);
     env_decay_ = expf(-1.0f / (0.015f * sr));
     guard_release_ = expf(-1.0f / (0.030f * sr));
+    gate_decay_ = expf(-1.0f / (0.060f * sr));
+    gate_attack_ = expf(-1.0f / (0.005f * sr));
+    gate_release_ = expf(-1.0f / (0.120f * sr));
 }
 
 /* Clear delay tails so the previous voice doesn't bleed into the new one.
@@ -877,7 +880,15 @@ void VoiceChain::process(int16_t* interleaved, unsigned int frames) {
                     const float target = c.vt_out_env > limit ? limit / c.vt_out_env : 1.0f;
                     c.vt_guard = target < c.vt_guard ? target : target + (c.vt_guard - target) * guard_release_;
                     voiced *= c.vt_guard;
-                    x = classic + (voiced - classic) * p_.vt_mix;
+                    /* Noise gate: in pauses the tract fits the room/mic hiss and
+                       resynthesises it tinted and louder than the classic path.
+                       Fade to classic below about -54 dBFS, full model above -42. */
+                    const float ax = fabsf(x);
+                    c.vt_gate_env = ax > c.vt_gate_env * gate_decay_ ? ax : c.vt_gate_env * gate_decay_;
+                    float open = (c.vt_gate_env - 0.002f) * (1.0f / (0.0079f - 0.002f));
+                    open = open < 0.0f ? 0.0f : (open > 1.0f ? 1.0f : open);
+                    c.vt_gate = open + (c.vt_gate - open) * (open > c.vt_gate ? gate_attack_ : gate_release_);
+                    x = classic + (voiced - classic) * (p_.vt_mix * c.vt_gate);
                 } else if (p_.pitch_on) {
                     x = pitch_sample(c.pitch, x);
                 }
