@@ -36,6 +36,8 @@ h1{font-size:1.3em;margin-bottom:.2em}
 p.sub{margin-top:0;color:#aaa}
 label{display:block;margin-top:1em;font-weight:600}
 select,button{font-size:1em;width:100%;padding:.6em;margin-top:.3em;border-radius:6px}
+label.adv{font-weight:normal;color:#aaa;font-size:.9em;margin-top:1.2em}
+label.adv input{width:auto;margin-right:.4em}
 .row{display:flex;gap:.5em;margin-top:1.2em}
 .row button{flex:1}
 #status{margin-top:1.2em;padding:.8em;border-radius:6px;background:#222;white-space:pre-wrap}
@@ -57,6 +59,7 @@ select,button{font-size:1em;width:100%;padding:.6em;margin-top:.3em;border-radiu
 <button id="stop">Stop audio</button>
 </div>
 <div id="status" class="idle">Loading&hellip;</div>
+<label class="adv"><input type="checkbox" id="all">Show all ALSA device names (troubleshooting)</label>
 <script>
 const $ = id => document.getElementById(id);
 
@@ -97,11 +100,16 @@ async function api(path, opts) {
 
 async function refresh() {
   const s = await api('/api/status');
-  const d = await api('/api/devices');
+  const d = await api('/api/devices' + ($('all').checked ? '?all=1' : ''));
   fill($('input'), d.capture || [], s.input);
   fill($('output'), d.playback || [], s.output);
   render(s);
-  if (d.error) show(d.error, 'err');
+  if (d.error) {
+    show(d.error, 'err');
+  } else if (!s.running && (!d.capture.length || !d.playback.length)) {
+    show('No USB audio ' + (!d.capture.length ? 'input' : 'output') +
+         ' found. Plug it in, then tap Refresh devices.', 'err');
+  }
 }
 
 async function post(path, body) {
@@ -113,6 +121,7 @@ async function post(path, body) {
 }
 
 $('refresh').onclick = refresh;
+$('all').onchange = refresh;
 $('start').onclick = () => {
   show('Starting\u2026', 'idle');
   post('/api/start', 'input=' + encodeURIComponent($('input').value) +
@@ -224,6 +233,7 @@ std::string form_value(const std::string& body, const char* key) {
 struct Request {
     std::string method;
     std::string path;
+    std::string query;
     std::string body;
 };
 
@@ -252,6 +262,7 @@ bool read_request(int fd, Request* req) {
     req->path = head.substr(sp1 + 1, sp2 - sp1 - 1);
     size_t q = req->path.find('?');
     if (q != std::string::npos) {
+        req->query = req->path.substr(q + 1);
         req->path.resize(q);
     }
 
@@ -328,7 +339,7 @@ public:
         if (req.method == "GET" && (req.path == "/" || req.path == "/index.html")) {
             send_response(fd, 200, "OK", "text/html; charset=utf-8", kIndexHtml);
         } else if (req.method == "GET" && req.path == "/api/devices") {
-            send_response(fd, 200, "OK", json, devices_json());
+            send_response(fd, 200, "OK", json, devices_json(form_value(req.query, "all") == "1"));
         } else if (req.method == "GET" && req.path == "/api/status") {
             send_response(fd, 200, "OK", json, status_json(""));
         } else if (req.method == "POST" && req.path == "/api/start") {
@@ -342,11 +353,13 @@ public:
     }
 
 private:
-    std::string devices_json() {
+    std::string devices_json(bool all) {
         AlsaDeviceList capture = {};
         AlsaDeviceList playback = {};
         std::string out;
-        if (alsa_enumerate_capture(&capture) < 0 || alsa_enumerate_playback(&playback) < 0) {
+        const int rc_in = all ? alsa_enumerate_all_capture(&capture) : alsa_enumerate_capture(&capture);
+        const int rc_out = all ? alsa_enumerate_all_playback(&playback) : alsa_enumerate_playback(&playback);
+        if (rc_in < 0 || rc_out < 0) {
             out = "{\"capture\":[],\"playback\":[],\"error\":\"" + json_escape(alsa_last_error()) + "\"}";
         } else {
             out = "{\"capture\":" + device_list_json(capture) + ",\"playback\":" +
@@ -367,6 +380,21 @@ private:
                "\",\"error\":\"" + json_escape(error) + "\",\"periods\":" + periods + "}";
     }
 
+    static bool device_known(const std::string& id, bool capture) {
+        AlsaDeviceList list = {};
+        bool known = false;
+        if ((capture ? alsa_enumerate_capture(&list) : alsa_enumerate_playback(&list)) == 0) {
+            known = list_contains(list, id);
+        }
+        alsa_device_list_free(&list);
+        if (!known &&
+            (capture ? alsa_enumerate_all_capture(&list) : alsa_enumerate_all_playback(&list)) == 0) {
+            known = list_contains(list, id);
+        }
+        alsa_device_list_free(&list);
+        return known;
+    }
+
     std::string start(const std::string& body) {
         const std::string in = form_value(body, "input");
         const std::string out = form_value(body, "output");
@@ -374,14 +402,7 @@ private:
             return status_json("Select both an input and an output device.");
         }
 
-        AlsaDeviceList capture = {};
-        AlsaDeviceList playback = {};
-        alsa_enumerate_capture(&capture);
-        alsa_enumerate_playback(&playback);
-        const bool known = list_contains(capture, in) && list_contains(playback, out);
-        alsa_device_list_free(&capture);
-        alsa_device_list_free(&playback);
-        if (!known) {
+        if (!device_known(in, true) || !device_known(out, false)) {
             return status_json("Device not found. Refresh devices and try again.");
         }
 

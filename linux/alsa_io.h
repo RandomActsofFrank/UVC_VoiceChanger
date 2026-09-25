@@ -39,8 +39,12 @@ int engine_parse_args(int argc, char** argv, EngineConfig* cfg);
 void engine_print_usage(const char* argv0);
 
 int alsa_list_devices(void);
+/* One entry per physical device (plughw:CARD=<id>,DEV=<n>). */
 int alsa_enumerate_capture(AlsaDeviceList* out);
 int alsa_enumerate_playback(AlsaDeviceList* out);
+/* Every ALSA PCM name, for troubleshooting. */
+int alsa_enumerate_all_capture(AlsaDeviceList* out);
+int alsa_enumerate_all_playback(AlsaDeviceList* out);
 void alsa_device_list_free(AlsaDeviceList* list);
 
 AlsaDuplex* alsa_open(const EngineConfig* cfg);

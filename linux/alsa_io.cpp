@@ -222,7 +222,25 @@ static int hint_matches_stream(const char* ioid, int want_capture) {
     return strcmp(ioid, "Input") != 0;
 }
 
-static int enumerate_stream(AlsaDeviceList* out, int want_capture) {
+static AlsaDeviceInfo* list_append(AlsaDeviceList* out, int* capacity) {
+    if (out->count >= *capacity) {
+        int grown_cap = *capacity ? *capacity * 2 : 16;
+        AlsaDeviceInfo* grown =
+            (AlsaDeviceInfo*)realloc(out->items, (size_t)grown_cap * sizeof(AlsaDeviceInfo));
+        if (!grown) {
+            set_error("Out of memory enumerating ALSA devices");
+            return NULL;
+        }
+        out->items = grown;
+        *capacity = grown_cap;
+    }
+    AlsaDeviceInfo* item = &out->items[out->count++];
+    memset(item, 0, sizeof(*item));
+    return item;
+}
+
+/* Every ALSA PCM name (hw, plughw, default, front, dsnoop, ...). */
+static int enumerate_hints(AlsaDeviceList* out, int want_capture) {
     memset(out, 0, sizeof(*out));
     void** hints = NULL;
     if (snd_device_name_hint(-1, "pcm", &hints) < 0 || !hints) {
@@ -231,55 +249,114 @@ static int enumerate_stream(AlsaDeviceList* out, int want_capture) {
     }
 
     int capacity = 0;
+    int rc = 0;
     for (void** h = hints; *h; h++) {
         char* name = snd_device_name_get_hint(*h, "NAME");
         char* desc = snd_device_name_get_hint(*h, "DESC");
         char* ioid = snd_device_name_get_hint(*h, "IOID");
         if (name && !skip_hint_name(name) && hint_matches_stream(ioid, want_capture)) {
-            if (out->count >= capacity) {
-                capacity = capacity ? capacity * 2 : 16;
-                AlsaDeviceInfo* grown =
-                    (AlsaDeviceInfo*)realloc(out->items, (size_t)capacity * sizeof(AlsaDeviceInfo));
-                if (!grown) {
-                    free(name);
-                    free(desc);
-                    free(ioid);
-                    alsa_device_list_free(out);
-                    snd_device_name_free_hint(hints);
-                    set_error("Out of memory enumerating ALSA devices");
-                    return -1;
-                }
-                out->items = grown;
-            }
-            AlsaDeviceInfo* item = &out->items[out->count++];
-            snprintf(item->id, sizeof(item->id), "%s", name);
-            if (desc && desc[0]) {
-                /* First line of DESC is usually the card product name. */
-                char one_line[200];
-                snprintf(one_line, sizeof(one_line), "%s", desc);
-                char* nl = strchr(one_line, '\n');
-                if (nl) {
-                    *nl = '\0';
-                }
-                snprintf(item->label, sizeof(item->label), "%s  [%s]", one_line, name);
+            AlsaDeviceInfo* item = list_append(out, &capacity);
+            if (!item) {
+                rc = -1;
             } else {
-                snprintf(item->label, sizeof(item->label), "%s", name);
+                snprintf(item->id, sizeof(item->id), "%s", name);
+                if (desc && desc[0]) {
+                    /* First line of DESC is usually the card product name. */
+                    char one_line[200];
+                    snprintf(one_line, sizeof(one_line), "%s", desc);
+                    char* nl = strchr(one_line, '\n');
+                    if (nl) {
+                        *nl = '\0';
+                    }
+                    snprintf(item->label, sizeof(item->label), "%s  [%s]", one_line, name);
+                } else {
+                    snprintf(item->label, sizeof(item->label), "%s", name);
+                }
             }
         }
         free(name);
         free(desc);
         free(ioid);
+        if (rc < 0) {
+            break;
+        }
     }
     snd_device_name_free_hint(hints);
+    if (rc < 0) {
+        alsa_device_list_free(out);
+    }
+    return rc;
+}
+
+/* One entry per physical card/device, opened through plughw by card id. */
+static int enumerate_cards(AlsaDeviceList* out, int want_capture) {
+    memset(out, 0, sizeof(*out));
+    const snd_pcm_stream_t stream = want_capture ? SND_PCM_STREAM_CAPTURE : SND_PCM_STREAM_PLAYBACK;
+    snd_ctl_card_info_t* card_info = NULL;
+    snd_pcm_info_t* pcm_info = NULL;
+    snd_ctl_card_info_alloca(&card_info);
+    snd_pcm_info_alloca(&pcm_info);
+
+    int capacity = 0;
+    int card = -1;
+    while (snd_card_next(&card) >= 0 && card >= 0) {
+        char ctl_name[32];
+        snprintf(ctl_name, sizeof(ctl_name), "hw:%d", card);
+        snd_ctl_t* ctl = NULL;
+        if (snd_ctl_open(&ctl, ctl_name, 0) < 0) {
+            continue;
+        }
+        if (snd_ctl_card_info(ctl, card_info) < 0) {
+            snd_ctl_close(ctl);
+            continue;
+        }
+        const char* card_id = snd_ctl_card_info_get_id(card_info);
+        const char* card_name = snd_ctl_card_info_get_name(card_info);
+
+        int dev = -1;
+        while (snd_ctl_pcm_next_device(ctl, &dev) >= 0 && dev >= 0) {
+            snd_pcm_info_set_device(pcm_info, (unsigned int)dev);
+            snd_pcm_info_set_subdevice(pcm_info, 0);
+            snd_pcm_info_set_stream(pcm_info, stream);
+            if (snd_ctl_pcm_info(ctl, pcm_info) < 0) {
+                continue;
+            }
+            AlsaDeviceInfo* item = list_append(out, &capacity);
+            if (!item) {
+                snd_ctl_close(ctl);
+                alsa_device_list_free(out);
+                return -1;
+            }
+            snprintf(item->id, sizeof(item->id), "plughw:CARD=%s,DEV=%d", card_id, dev);
+            if (dev == 0) {
+                snprintf(item->label, sizeof(item->label), "%s", card_name);
+            } else {
+                snprintf(item->label,
+                         sizeof(item->label),
+                         "%s — %s",
+                         card_name,
+                         snd_pcm_info_get_name(pcm_info));
+            }
+        }
+        snd_ctl_close(ctl);
+    }
     return 0;
 }
 
 int alsa_enumerate_capture(AlsaDeviceList* out) {
-    return enumerate_stream(out, 1);
+    return enumerate_cards(out, 1);
 }
 
 int alsa_enumerate_playback(AlsaDeviceList* out) {
-    return enumerate_stream(out, 0);
+    return enumerate_cards(out, 0);
+}
+
+int alsa_enumerate_all_capture(AlsaDeviceList* out) {
+    return enumerate_hints(out, 1);
+}
+
+int alsa_enumerate_all_playback(AlsaDeviceList* out) {
+    return enumerate_hints(out, 0);
 }
 
 void alsa_device_list_free(AlsaDeviceList* list) {
@@ -301,11 +378,11 @@ int alsa_list_devices(void) {
     }
     printf("Capture devices:\n");
     for (int i = 0; i < capture.count; i++) {
-        printf("  %s\n", capture.items[i].label);
+        printf("  %-32s %s\n", capture.items[i].id, capture.items[i].label);
     }
     printf("Playback devices:\n");
     for (int i = 0; i < playback.count; i++) {
-        printf("  %s\n", playback.items[i].label);
+        printf("  %-32s %s\n", playback.items[i].id, playback.items[i].label);
     }
     alsa_device_list_free(&capture);
     alsa_device_list_free(&playback);
