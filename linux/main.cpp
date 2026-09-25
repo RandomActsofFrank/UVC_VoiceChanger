@@ -1,6 +1,6 @@
 /*
  * Milestone 1: ALSA stereo pass-through.
- * Default: GTK device picker. Use --cli for headless.
+ * Default: GTK device picker when built with GTK and a display is present; otherwise CLI.
  */
 
 #include "alsa_io.h"
@@ -90,10 +90,17 @@ int main(int argc, char** argv) {
         return alsa_list_devices() == 0 ? 0 : 1;
     }
 
+#ifdef HAVE_GTK
     const int want_cli = cfg.use_cli || (cfg.use_gui == 0 && getenv("DISPLAY") == nullptr &&
                                          getenv("WAYLAND_DISPLAY") == nullptr);
     if (cfg.use_gui || !want_cli) {
         return run_gui(argc, argv, &cfg);
     }
+#else
+    if (cfg.use_gui) {
+        fprintf(stderr, "Built without GTK (NO_GUI); use --cli.\n");
+        return 1;
+    }
+#endif
     return run_cli(cfg);
 }
