@@ -51,6 +51,7 @@ void engine_config_defaults(EngineConfig* cfg) {
     cfg->verbose = 1;
     cfg->use_cli = 0;
     cfg->web_port = 8080;
+    snprintf(cfg->preset, sizeof(cfg->preset), "%s", "clean");
 }
 
 static int looks_like_play3(const char* name) {
@@ -112,7 +113,8 @@ void engine_print_usage(const char* argv0) {
             "Usage: %s [options]\n"
             "  (no flags)             Serve the device-selection web page\n"
             "  --port N               Web page port (default: 8080)\n"
-            "  --cli                  Start pass-through immediately, no web page\n"
+            "  --cli                  Start audio immediately, no web page\n"
+            "  --preset ID            Voice preset: clean, r3x, droid, radio, villain\n"
             "  --list                 List ALSA PCM devices and exit\n"
             "  --input DEV            Capture device\n"
             "  --output DEV           Playback device\n"
@@ -125,7 +127,6 @@ void engine_print_usage(const char* argv0) {
             "  --quiet                Less logging\n"
             "  -h, --help             This help\n"
             "\n"
-            "Milestone 1: ALSA stereo pass-through only. No DSP.\n"
             "Format is strict: S16_LE, requested rate, requested channels.\n",
             argv0);
 }
@@ -139,6 +140,9 @@ int engine_parse_args(int argc, char** argv, EngineConfig* cfg) {
             cfg->list_only = 1;
         } else if (!strcmp(a, "--port") && next) {
             cfg->web_port = atoi(next);
+            i++;
+        } else if (!strcmp(a, "--preset") && next) {
+            snprintf(cfg->preset, sizeof(cfg->preset), "%s", next);
             i++;
         } else if (!strcmp(a, "--cli")) {
             cfg->use_cli = 1;

@@ -4,7 +4,21 @@
 #include <cstdlib>
 #include <cstring>
 
-PassEngine::PassEngine() = default;
+PassEngine::PassEngine() {
+    fx_apply_preset("clean", &fx_);
+}
+
+void PassEngine::set_fx(const FxParams& fx) {
+    std::lock_guard<std::mutex> lock(mu_);
+    fx_ = fx;
+    fx_clamp(&fx_);
+    fx_version_++;
+}
+
+FxParams PassEngine::fx() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return fx_;
+}
 
 PassEngine::~PassEngine() {
     stop();
@@ -112,7 +126,17 @@ void PassEngine::loop() {
         return;
     }
 
+    VoiceChain chain(alsa_rate(io), channels);
+    chain.set_input_gain(cfg.mic_gain * cfg.amp_gain);
+    unsigned int fx_seen = fx_version_.load() - 1;
+
     while (run_.load()) {
+        const unsigned int fx_now = fx_version_.load();
+        if (fx_now != fx_seen) {
+            chain.configure(fx());
+            fx_seen = fx_now;
+        }
+
         if (alsa_read(io, block, period) < 0) {
             std::lock_guard<std::mutex> lock(mu_);
             error_ = alsa_last_error()[0] ? alsa_last_error() : "ALSA capture failed";
@@ -121,19 +145,8 @@ void PassEngine::loop() {
             break;
         }
 
-        /* Direct copy path: optional linear gain only. No DSP, no channel remix. */
-        if (cfg.mic_gain != 1.0f || cfg.amp_gain != 1.0f) {
-            const float g = cfg.mic_gain * cfg.amp_gain;
-            for (size_t i = 0; i < samples; i++) {
-                float v = (float)block[i] * g;
-                if (v > 32767.0f) {
-                    v = 32767.0f;
-                } else if (v < -32768.0f) {
-                    v = -32768.0f;
-                }
-                block[i] = (int16_t)v;
-            }
-        }
+        /* Each channel processed separately; no channel remix. */
+        chain.process(block, period);
 
         if (alsa_write(io, block, period) < 0) {
             std::lock_guard<std::mutex> lock(mu_);

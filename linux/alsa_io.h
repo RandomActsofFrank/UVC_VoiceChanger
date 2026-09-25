@@ -20,6 +20,7 @@ typedef struct {
     int verbose;
     int use_cli;
     int web_port;
+    char preset[32]; /* voice preset id applied at startup */
 } EngineConfig;
 
 typedef struct {

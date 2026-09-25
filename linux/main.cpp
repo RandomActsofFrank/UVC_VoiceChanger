@@ -1,6 +1,6 @@
 /*
- * Milestone 1: ALSA stereo pass-through.
- * Default: device-selection web page. Use --cli to start audio directly.
+ * ALSA stereo capture -> voice effects -> playback.
+ * Default: web page for devices and voice. Use --cli to start audio directly.
  */
 
 #include "alsa_io.h"
@@ -29,17 +29,22 @@ static int run_cli(EngineConfig& cfg) {
     cfg.channels = 2;
 
     fprintf(stderr,
-            "UVC Linux audio engine — Milestone 1 CLI (stereo pass-through)\n"
+            "UVC Linux audio engine — CLI\n"
             "  format : 48000 Hz, S16_LE, 2 ch (strict)\n"
             "  period : %u  buffer: %u\n"
             "  input  : %s\n"
-            "  output : %s\n",
+            "  output : %s\n"
+            "  preset : %s\n",
             cfg.period_frames,
             cfg.buffer_frames,
             cfg.input_dev,
-            cfg.output_dev);
+            cfg.output_dev,
+            cfg.preset);
 
     PassEngine engine;
+    FxParams fx;
+    fx_apply_preset(cfg.preset, &fx);
+    engine.set_fx(fx);
     g_cli_engine = &engine;
     if (!engine.start(cfg)) {
         fprintf(stderr, "Start failed: %s\n", engine.last_error().c_str());
@@ -85,6 +90,11 @@ int main(int argc, char** argv) {
 
     if (cfg.list_only) {
         return alsa_list_devices() == 0 ? 0 : 1;
+    }
+    FxParams check;
+    if (!fx_apply_preset(cfg.preset, &check)) {
+        fprintf(stderr, "Unknown preset: %s\n", cfg.preset);
+        return 1;
     }
 
     signal(SIGINT, on_signal);

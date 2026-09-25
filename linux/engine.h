@@ -1,13 +1,14 @@
 #pragma once
 
 #include "alsa_io.h"
+#include "dsp.h"
 
 #include <atomic>
 #include <mutex>
 #include <string>
 #include <thread>
 
-/* Threaded stereo pass-through. DSP is intentionally absent. */
+/* Threaded stereo capture -> voice effects -> playback. */
 class PassEngine {
 public:
     PassEngine();
@@ -16,6 +17,10 @@ public:
     bool start(const EngineConfig& cfg);
     void stop();
     bool running() const;
+
+    /* Safe to call while running; applied at the next audio period. */
+    void set_fx(const FxParams& fx);
+    FxParams fx() const;
 
     std::string status() const;
     std::string last_error() const;
@@ -35,4 +40,6 @@ private:
     std::string error_;
     std::atomic<unsigned long long> blocks_{0};
     std::atomic<unsigned long long> xruns_{0};
+    FxParams fx_{};
+    std::atomic<unsigned int> fx_version_{0};
 };

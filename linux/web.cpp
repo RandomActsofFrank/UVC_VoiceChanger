@@ -1,7 +1,7 @@
 /*
- * Milestone 1 device-selection web page.
+ * Web page for device selection and voice effects.
  * Minimal single-threaded HTTP server: pick ALSA capture/playback,
- * start/stop stereo pass-through. No DSP.
+ * start/stop audio, choose presets and adjust effects live.
  */
 
 #include "web.h"
@@ -44,11 +44,20 @@ label.adv input{width:auto;margin-right:.4em}
 .run{border-left:6px solid #2a2}
 .idle{border-left:6px solid #666}
 .err{border-left:6px solid #c33}
+h2{font-size:1.1em;margin-top:2em;border-top:1px solid #333;padding-top:1em}
+fieldset{border:1px solid #333;border-radius:6px;margin-top:1em;padding:.5em .8em}
+legend{font-weight:600;padding:0 .3em}
+legend input,label.on input{width:auto;margin-right:.4em}
+label.on{font-weight:600}
+.knob{display:grid;grid-template-columns:8.5em 1fr 3.5em;align-items:center;gap:.5em;margin:.4em 0}
+.knob input{width:100%}
+.val{text-align:right;color:#aaa;font-variant-numeric:tabular-nums}
+fieldset.off .knob{opacity:.4}
 </style>
 </head>
 <body>
 <h1>UVC Voice Changer</h1>
-<p class="sub">Stereo pass-through &middot; 48 kHz &middot; 16-bit &middot; 2 ch &middot; no DSP</p>
+<p class="sub">Stereo &middot; 48 kHz &middot; 16-bit &middot; 2 ch</p>
 <label for="input">Input device</label>
 <select id="input"></select>
 <label for="output">Output device</label>
@@ -60,6 +69,13 @@ label.adv input{width:auto;margin-right:.4em}
 </div>
 <div id="status" class="idle">Loading&hellip;</div>
 <label class="adv"><input type="checkbox" id="all">Show all ALSA device names (troubleshooting)</label>
+
+<h2>Voice</h2>
+<label for="preset">Preset</label>
+<select id="preset"></select>
+<label class="on"><input type="checkbox" id="enabled">Effects on</label>
+<div class="knob"><span>Volume dB</span><input type="range" id="volume_db" aria-label="Volume dB" min="-24" max="12" step="0.5"><span class="val" id="volume_db_v"></span></div>
+<div id="fx"></div>
 <script>
 const $ = id => document.getElementById(id);
 
@@ -137,6 +153,123 @@ setInterval(async () => {
   }
 }, 1000);
 
+const FX = [
+  {title: 'Pitch', on: 'pitch_on', knobs: [
+    ['pitch_semitones', 'Semitones', -12, 12, 0.5]]},
+  {title: 'High-pass (cut bass)', on: 'hp_on', knobs: [
+    ['hp_freq', 'Frequency Hz', 20, 2000, 10],
+    ['hp_cascade', 'Steepness', 1, 4, 1]]},
+  {title: 'Low-pass (cut treble)', on: 'lp_on', knobs: [
+    ['lp_freq', 'Frequency Hz', 1000, 12000, 100],
+    ['lp_cascade', 'Steepness', 1, 4, 1]]},
+  {title: 'Presence peak', on: 'peak_on', knobs: [
+    ['peak_freq', 'Frequency Hz', 200, 8000, 50],
+    ['peak_q', 'Width (Q)', 0.3, 8, 0.1],
+    ['peak_gain_db', 'Boost dB', -12, 18, 0.5]]},
+  {title: 'Ring modulator (robot buzz)', on: 'ring_on', knobs: [
+    ['ring_freq', 'Frequency Hz', 5, 1000, 5],
+    ['ring_mix', 'Mix', 0, 1, 0.05]]},
+  {title: 'Metal / echo', on: 'comb_on', knobs: [
+    ['comb_ms', 'Delay ms', 1, 300, 1],
+    ['comb_feedback', 'Feedback', 0, 0.9, 0.05],
+    ['comb_mix', 'Mix', 0, 1, 0.05]]},
+  {title: 'Clipping (grit)', on: 'clip_on', knobs: [
+    ['clip_factor', 'Amount', 1, 10, 1]]},
+];
+const KEYS = ['enabled', 'volume_db'];
+let sendTimer = null;
+
+function buildFx() {
+  for (const s of FX) {
+    const box = document.createElement('fieldset');
+    box.id = s.on + '_box';
+    const legend = document.createElement('legend');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id = s.on;
+    cb.onchange = fxChanged;
+    cb.setAttribute('aria-label', s.title);
+    legend.append(cb, s.title);
+    box.appendChild(legend);
+    KEYS.push(s.on);
+    for (const [key, label, min, max, step] of s.knobs) {
+      const row = document.createElement('div');
+      row.className = 'knob';
+      const name = document.createElement('span');
+      name.textContent = label;
+      const r = document.createElement('input');
+      Object.assign(r, {type: 'range', id: key, min: min, max: max, step: step});
+      r.setAttribute('aria-label', s.title + ' ' + label);
+      r.oninput = fxChanged;
+      const v = document.createElement('span');
+      v.className = 'val';
+      v.id = key + '_v';
+      row.append(name, r, v);
+      box.appendChild(row);
+      KEYS.push(key);
+    }
+    $('fx').appendChild(box);
+  }
+  $('enabled').onchange = fxChanged;
+  $('volume_db').oninput = fxChanged;
+}
+
+function updateLabels() {
+  for (const k of KEYS) {
+    const el = $(k);
+    if (el.type === 'range') $(k + '_v').textContent = el.value;
+  }
+  for (const s of FX) $(s.on + '_box').className = $(s.on).checked ? '' : 'off';
+}
+
+function showFx(d) {
+  const sel = $('preset');
+  if (!sel.options.length) {
+    for (const p of d.presets.concat([{id: 'custom', name: 'Custom'}])) {
+      const o = document.createElement('option');
+      o.value = p.id;
+      o.textContent = p.name;
+      sel.appendChild(o);
+    }
+  }
+  sel.value = d.fx.preset;
+  for (const k of KEYS) {
+    const el = $(k);
+    if (el.type === 'checkbox') el.checked = !!d.fx[k];
+    else el.value = d.fx[k];
+  }
+  updateLabels();
+}
+
+function fxBody() {
+  return KEYS.map(k => {
+    const el = $(k);
+    return k + '=' + (el.type === 'checkbox' ? (el.checked ? 1 : 0) : encodeURIComponent(el.value));
+  }).join('&');
+}
+
+function fxChanged() {
+  updateLabels();
+  $('preset').value = 'custom';
+  clearTimeout(sendTimer);
+  sendTimer = setTimeout(() => api('/api/fx', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: fxBody()
+  }), 80);
+}
+
+$('preset').onchange = async () => {
+  if ($('preset').value === 'custom') return;
+  showFx(await api('/api/fx', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: 'preset=' + encodeURIComponent($('preset').value)
+  }));
+};
+
+buildFx();
+api('/api/fx').then(showFx);
 refresh();
 </script>
 </body>
@@ -214,7 +347,7 @@ std::string url_decode(const std::string& s) {
     return out;
 }
 
-std::string form_value(const std::string& body, const char* key) {
+bool form_find(const std::string& body, const char* key, std::string* value) {
     const std::string want = std::string(key) + "=";
     size_t pos = 0;
     while (pos <= body.size()) {
@@ -223,11 +356,66 @@ std::string form_value(const std::string& body, const char* key) {
             end = body.size();
         }
         if (body.compare(pos, want.size(), want) == 0) {
-            return url_decode(body.substr(pos + want.size(), end - pos - want.size()));
+            *value = url_decode(body.substr(pos + want.size(), end - pos - want.size()));
+            return true;
         }
         pos = end + 1;
     }
-    return "";
+    return false;
+}
+
+std::string form_value(const std::string& body, const char* key) {
+    std::string value;
+    form_find(body, key, &value);
+    return value;
+}
+
+std::string fx_json(const FxParams& fx) {
+    int count = 0;
+    const FxField* fields = fx_fields(&count);
+    std::string out = "{\"preset\":\"" + json_escape(fx.preset) + "\"";
+    for (int i = 0; i < count; i++) {
+        const char* base = (const char*)&fx + fields[i].offset;
+        char val[32];
+        switch (fields[i].kind) {
+            case kFxBool:
+                snprintf(val, sizeof(val), "%s", *(const bool*)base ? "true" : "false");
+                break;
+            case kFxInt:
+                snprintf(val, sizeof(val), "%d", *(const int*)base);
+                break;
+            case kFxFloat:
+                snprintf(val, sizeof(val), "%g", *(const float*)base);
+                break;
+        }
+        out += std::string(",\"") + fields[i].key + "\":" + val;
+    }
+    return out + "}";
+}
+
+/* Apply any fields present in a form body; missing fields keep their value. */
+void fx_from_form(const std::string& body, FxParams* fx) {
+    int count = 0;
+    const FxField* fields = fx_fields(&count);
+    for (int i = 0; i < count; i++) {
+        std::string v;
+        if (!form_find(body, fields[i].key, &v)) {
+            continue;
+        }
+        char* base = (char*)fx + fields[i].offset;
+        switch (fields[i].kind) {
+            case kFxBool:
+                *(bool*)base = v == "1" || v == "true" || v == "on";
+                break;
+            case kFxInt:
+                *(int*)base = atoi(v.c_str());
+                break;
+            case kFxFloat:
+                *(float*)base = strtof(v.c_str(), nullptr);
+                break;
+        }
+    }
+    fx_clamp(fx);
 }
 
 struct Request {
@@ -327,6 +515,10 @@ public:
     explicit WebServer(const EngineConfig& defaults) : cfg_(defaults) {
         cfg_.rate = 48000;
         cfg_.channels = 2;
+        FxParams fx;
+        if (fx_apply_preset(cfg_.preset, &fx)) {
+            engine_.set_fx(fx);
+        }
     }
 
     void handle(int fd) {
@@ -347,6 +539,11 @@ public:
         } else if (req.method == "POST" && req.path == "/api/stop") {
             engine_.stop();
             send_response(fd, 200, "OK", json, status_json(""));
+        } else if (req.method == "GET" && req.path == "/api/fx") {
+            send_response(fd, 200, "OK", json, fx_response());
+        } else if (req.method == "POST" && req.path == "/api/fx") {
+            update_fx(req.body);
+            send_response(fd, 200, "OK", json, fx_response());
         } else {
             send_response(fd, 404, "Not Found", "text/plain", "Not found\n");
         }
@@ -378,6 +575,32 @@ private:
                ",\"input\":\"" + json_escape(cfg_.input_dev) + "\",\"output\":\"" +
                json_escape(cfg_.output_dev) + "\",\"status\":\"" + json_escape(engine_.status()) +
                "\",\"error\":\"" + json_escape(error) + "\",\"periods\":" + periods + "}";
+    }
+
+    std::string fx_response() {
+        int count = 0;
+        const FxPresetInfo* presets = fx_presets(&count);
+        std::string out = "{\"presets\":[";
+        for (int i = 0; i < count; i++) {
+            if (i) {
+                out += ",";
+            }
+            out += std::string("{\"id\":\"") + presets[i].id + "\",\"name\":\"" +
+                   json_escape(presets[i].name) + "\"}";
+        }
+        return out + "],\"fx\":" + fx_json(engine_.fx()) + "}";
+    }
+
+    void update_fx(const std::string& body) {
+        FxParams fx = engine_.fx();
+        std::string preset;
+        if (form_find(body, "preset", &preset)) {
+            fx_apply_preset(preset.c_str(), &fx);
+        } else {
+            fx_from_form(body, &fx);
+            snprintf(fx.preset, sizeof(fx.preset), "%s", "custom");
+        }
+        engine_.set_fx(fx);
     }
 
     static bool device_known(const std::string& id, bool capture) {

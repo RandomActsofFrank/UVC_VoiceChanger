@@ -1,10 +1,10 @@
-# Milestone 1 ALSA stereo pass-through + web device picker
+# ALSA stereo capture -> voice effects -> playback, with web config
 # (Raspberry Pi OS 64-bit; Pi Zero 2 W or Pi 4)
 CXX      ?= g++
 CXXFLAGS ?= -O2 -Wall -Wextra -std=c++17
 LDFLAGS  ?= -lasound -lm -pthread
 
-SRCS = main.cpp alsa_io.cpp engine.cpp web.cpp
+SRCS = main.cpp alsa_io.cpp engine.cpp web.cpp dsp.cpp biquad.cpp
 OBJS = $(SRCS:.cpp=.o)
 BIN  = uvc_pass
 
@@ -15,7 +15,7 @@ all: $(BIN)
 $(BIN): $(OBJS)
 	$(CXX) -o $@ $^ $(LDFLAGS)
 
-%.o: %.cpp alsa_io.h engine.h web.h
+%.o: %.cpp alsa_io.h engine.h web.h dsp.h biquad.h
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 clean:
