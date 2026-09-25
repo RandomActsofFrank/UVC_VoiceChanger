@@ -49,8 +49,8 @@ void engine_config_defaults(EngineConfig* cfg) {
     cfg->amp_gain = 1.0f;
     cfg->list_only = 0;
     cfg->verbose = 1;
-    cfg->use_gui = 0;
     cfg->use_cli = 0;
+    cfg->web_port = 8080;
 }
 
 static int looks_like_play3(const char* name) {
@@ -110,9 +110,9 @@ static void try_autofill_play3(EngineConfig* cfg) {
 void engine_print_usage(const char* argv0) {
     fprintf(stderr,
             "Usage: %s [options]\n"
-            "  (no flags)             Open the device-selection GUI (if built with GTK)\n"
-            "  --gui                  Force the GUI\n"
-            "  --cli                  Headless CLI pass-through (no GUI)\n"
+            "  (no flags)             Serve the device-selection web page\n"
+            "  --port N               Web page port (default: 8080)\n"
+            "  --cli                  Start pass-through immediately, no web page\n"
             "  --list                 List ALSA PCM devices and exit\n"
             "  --input DEV            Capture device\n"
             "  --output DEV           Playback device\n"
@@ -137,8 +137,9 @@ int engine_parse_args(int argc, char** argv, EngineConfig* cfg) {
         const char* next = (i + 1 < argc) ? argv[i + 1] : NULL;
         if (!strcmp(a, "--list")) {
             cfg->list_only = 1;
-        } else if (!strcmp(a, "--gui")) {
-            cfg->use_gui = 1;
+        } else if (!strcmp(a, "--port") && next) {
+            cfg->web_port = atoi(next);
+            i++;
         } else if (!strcmp(a, "--cli")) {
             cfg->use_cli = 1;
         } else if (!strcmp(a, "--quiet")) {
@@ -181,10 +182,14 @@ int engine_parse_args(int argc, char** argv, EngineConfig* cfg) {
         fprintf(stderr, "Invalid rate/channels/period\n");
         return -1;
     }
+    if (cfg->web_port < 1 || cfg->web_port > 65535) {
+        fprintf(stderr, "Invalid port\n");
+        return -1;
+    }
     if (cfg->buffer_frames < cfg->period_frames * 2) {
         cfg->buffer_frames = cfg->period_frames * 2;
     }
-    if (!cfg->list_only && cfg->use_cli) {
+    if (!cfg->list_only) {
         try_autofill_play3(cfg);
         if (!strcmp(cfg->output_dev, "default") && strcmp(cfg->input_dev, "default") != 0) {
             snprintf(cfg->output_dev, sizeof(cfg->output_dev), "%s", cfg->input_dev);
@@ -197,7 +202,7 @@ static int skip_hint_name(const char* name) {
     if (!name || !name[0]) {
         return 1;
     }
-    /* Keep real cards; skip abstract plugins that clutter the GUI. */
+    /* Keep real cards; skip abstract plugins that clutter the device list. */
     if (!strcmp(name, "null") || !strcmp(name, "oss") || !strcmp(name, "jack") ||
         !strcmp(name, "speex") || !strcmp(name, "upmix") || !strcmp(name, "vdownmix") ||
         !strcmp(name, "lavrate") || !strcmp(name, "samplerate") || !strcmp(name, "a52") ||

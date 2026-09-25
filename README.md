@@ -1,21 +1,20 @@
 # UVC VoiceChanger
 
-ESP32/ESP32-S3 cosplay voice changer by [s60sc](https://github.com/s60sc/ESP32_VoiceChanger), plus a Linux port for Raspberry Pi 4 + USB audio.
+ESP32/ESP32-S3 cosplay voice changer by [s60sc](https://github.com/s60sc/ESP32_VoiceChanger), plus a Linux port for Raspberry Pi + USB audio.
 
 | Path | Contents |
 |------|----------|
 | [`ESP/`](ESP/) | Original Arduino firmware (unchanged reference) |
-| [`linux/`](linux/) | Pi audio engine — Milestone 1 ALSA stereo pass-through + device GUI |
+| [`linux/`](linux/) | Pi audio engine — Milestone 1 ALSA stereo pass-through + web device picker |
 
-**All setup below is meant to be run on the Raspberry Pi itself** (SSH or local terminal), not from a Mac/PC.
+**All setup below is meant to be run on the Raspberry Pi itself** (over SSH), not from a Mac/PC.
 
-Supported boards: **Pi Zero 2 W** (headless, recommended: Raspberry Pi OS Lite 64-bit) and **Pi 4** (desktop GUI optional).
+Target board: **Pi Zero 2 W** running **Raspberry Pi OS Lite 64-bit**, no display. Configuration is done from a web page on a phone or computer on the same network. A Pi 4 works the same way.
 
 **Pi Zero 2 W notes**
 
 - It has one USB data port (the micro-USB labelled **USB**, not **PWR**). Use a micro-USB OTG adapter or a small OTG hub to connect the Play! 3.
 - The Play! 3 is both capture and playback, so one USB device covers input and output.
-- 512 MB RAM: skip the desktop and GTK; build with `make NO_GUI=1` and run `--cli`.
 - Use a solid 5 V / 2.5 A supply; USB audio dropouts on the Zero are often power-related.
 
 ## Milestone 1 — ALSA stereo pass-through + device selection
@@ -34,7 +33,7 @@ USB playback (speakers / headphones / amp)
 
 - Strict format: **48000 Hz**, **S16_LE**, **2 channels**
 - No mono downmix, no channel duplication, no DSP
-- GTK window to pick input/output from live ALSA enumeration
+- Web page to pick input/output from live ALSA enumeration
 - Start / Stop; change devices only while stopped
 - XRUN recovery retained
 - CLI mode still available (`--cli`)
@@ -58,45 +57,35 @@ git pull
 
 ### 2. Install build dependencies
 
-Pi Zero 2 W (headless):
-
 ```bash
-sudo apt install -y build-essential libasound2-dev pkg-config
-```
-
-Pi 4 with desktop (adds the GTK GUI):
-
-```bash
-sudo apt install -y build-essential libasound2-dev libgtk-3-dev pkg-config
+sudo apt install -y build-essential libasound2-dev
 ```
 
 ### 3. Build
 
 ```bash
 cd ~/UVC_VoiceChanger/linux
-make NO_GUI=1   # Pi Zero 2 W
-# or
-make            # Pi 4; includes the GUI if libgtk-3-dev is installed
+make
 ```
 
-### 4. Run (GUI, Pi 4 only)
-
-Needs a GTK build and a display (desktop session, or `DISPLAY` set over SSH with X11 forwarding / VNC).
+### 4. Run (web page)
 
 ```bash
 cd ~/UVC_VoiceChanger/linux
 ./uvc_pass
-# or
-./uvc_pass --gui
 ```
 
-1. Choose **INPUT DEVICE** (USB capture / Play! 3).
-2. Choose **OUTPUT DEVICE** (USB speakers).
-3. Click **Start Audio**.
-4. Click **Stop Audio** before changing devices.
+It prints the address to open, e.g. `http://voicepi.local:8080/`. Open that from a phone or computer on the same Wi-Fi.
+
+1. Choose **Input device** (USB capture / Play! 3).
+2. Choose **Output device** (USB speakers).
+3. Tap **Start audio**.
+4. Tap **Stop audio** before changing devices.
 5. **Refresh devices** after plugging USB gear.
 
-### 5. Run (CLI / headless, Pi Zero 2 W)
+Use `--port N` to change the port. The page has no password, so only run it on a network you trust. Ctrl+C in the SSH session quits it and stops audio.
+
+### 5. Run (CLI, no web page)
 
 ```bash
 cd ~/UVC_VoiceChanger/linux

@@ -18,13 +18,13 @@ typedef struct {
     float amp_gain;
     int list_only;
     int verbose;
-    int use_gui;
     int use_cli;
+    int web_port;
 } EngineConfig;
 
 typedef struct {
     char id[128];    /* ALSA PCM name passed to snd_pcm_open */
-    char label[256]; /* human-readable label for the GUI */
+    char label[256]; /* human-readable label for the web page */
 } AlsaDeviceInfo;
 
 typedef struct {

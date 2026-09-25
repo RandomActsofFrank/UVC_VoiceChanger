@@ -1,11 +1,11 @@
 /*
  * Milestone 1: ALSA stereo pass-through.
- * Default: GTK device picker when built with GTK and a display is present; otherwise CLI.
+ * Default: device-selection web page. Use --cli to start audio directly.
  */
 
 #include "alsa_io.h"
 #include "engine.h"
-#include "gui.h"
+#include "web.h"
 
 #include <math.h>
 #include <signal.h>
@@ -25,9 +25,6 @@ static void on_signal(int) {
 }
 
 static int run_cli(EngineConfig& cfg) {
-    signal(SIGINT, on_signal);
-    signal(SIGTERM, on_signal);
-
     cfg.rate = 48000;
     cfg.channels = 2;
 
@@ -90,17 +87,10 @@ int main(int argc, char** argv) {
         return alsa_list_devices() == 0 ? 0 : 1;
     }
 
-#ifdef HAVE_GTK
-    const int want_cli = cfg.use_cli || (cfg.use_gui == 0 && getenv("DISPLAY") == nullptr &&
-                                         getenv("WAYLAND_DISPLAY") == nullptr);
-    if (cfg.use_gui || !want_cli) {
-        return run_gui(argc, argv, &cfg);
+    signal(SIGINT, on_signal);
+    signal(SIGTERM, on_signal);
+    if (cfg.use_cli) {
+        return run_cli(cfg);
     }
-#else
-    if (cfg.use_gui) {
-        fprintf(stderr, "Built without GTK (NO_GUI); use --cli.\n");
-        return 1;
-    }
-#endif
-    return run_cli(cfg);
+    return run_web(&cfg, &g_run);
 }
