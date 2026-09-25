@@ -36,21 +36,54 @@ USB playback (speakers / headphones / amp)
 - XRUN recovery retained
 - CLI mode still available (`--cli`)
 
-### Voice effects
+### Voices
 
-Same building blocks and order as the ESP32 firmware (`ESP/Filters.cpp`):
-filters → ring modulator → metal/echo → volume → pitch → clipping.
+The top of the page is the voice picker: tap **Clean / Bypass**, **DJ R3X**, **TIE Pilot**, **Stormtrooper** or **Droid** and the whole character loads at once. The active voice is shown in the box above the buttons. No tuning is needed. Switching while audio is running crossfades over about 10 ms (one audio period out, one in), clears the old voice's echo tail, and doesn't restart the audio engine.
 
-| Effect | What it does |
-|--------|--------------|
+**More voices** has the extras: Dark Mechanical, Quirky Droid, the original (classic) Stormtrooper / TIE Pilot / Droid, Radio and Villain. Presets you save yourself show up as voice buttons too.
+
+Adding a new character later (e.g. Chopper) is one row in `kPresets` plus one branch in `fx_apply_preset()` in `linux/dsp.cpp`.
+
+### Advanced: DSP tuning
+
+The collapsed **Advanced** section holds every DSP control, preset save/restore, and an **A/B compare** switch: **Bypass** (dry), **Classic DSP** (the original chain only, all character stages off) and **Character DSP** (everything). The A/B setting is not saved.
+
+Actual signal chain per channel (L and R are processed separately):
+
+```
+input gain
+→ high-pass ×n → low-pass ×n → presence peak        (classic)
+→ ring modulator                                    (classic)
+→ metal / cavity comb (optional feedback damping)   (classic, improved)
+→ volume → pitch shift                              (classic)
+→ [character stages]
+    vocal character → compressor → split:
+      dry ──────────────────────────────────────┐
+      wet: resonators → saturation → helmet ────┴→ wet mix
+    → final shelf EQ
+→ soft clip                                         (classic)
+→ soft limiter (safety)
+→ 16-bit out
+```
+
+| Stage | What it does |
+|-------|--------------|
 | Pitch | Shifts up/down in semitones (low-latency delay-line shifter; big shifts sound slightly warbly) |
 | High-pass / Low-pass | Cut bass / treble; "Steepness" cascades filters like the ESP |
 | Presence peak | Boost or cut a frequency band (nasal / tinny character) |
 | Ring modulator | Robot / Dalek buzz; "Mix" blends it with the dry voice |
-| Metal / echo | Short delay = metallic tin-can tone; long delay = echo. Feedback 0 = no tail; raise it for ringing / repeats |
-| Clipping | Soft distortion / grit |
+| Metal / cavity / echo | Short delay = metallic cavity; long = echo. Feedback 0 = no tail; Damping darkens the ringing. Feedback is capped below 1, so it can't run away |
+| Clipping | Soft distortion / grit (original ESP curve) |
+| Vocal character | Three vocal-tract-style resonances + a nasal peak whose frequencies scale together ("Size scale"), plus a spectral tilt. **This is a resonant-EQ approximation, not a true formant shifter**: it colours the voice as bigger/smaller/nasal but doesn't move your own formants |
+| Compressor | Soft-knee peak compressor (threshold, ratio, attack, release, makeup) — evens out level so the character holds on quiet words |
+| Resonators | Four tunable peak resonances. Helmet starting points 500/900/1800/3000 Hz, droid 700/1200/2200/3500 Hz |
+| Saturation | tanh warmth/grit, separate from Clipping; unity gain on quiet signals, Asymmetry adds even harmonics |
+| Helmet / comms | Band limit + very short damped reflections + optional amplitude modulation (engine hum) |
+| Wet mix | Blends the character path with the (compressed) dry voice — keeps intelligibility |
+| Final EQ | Low/high shelves |
+| Limiter | Zero-latency soft limiter; output never exceeds the ceiling |
 
-Presets: **Clean**, **DJ R3X**, **Droid**, **Stormtrooper**, **TIE Pilot**, **Radio**, **Villain**. Picking a preset loads its settings; moving any slider switches to **Custom (from …)**. Changes apply immediately, even while audio is running.
+Moving any slider switches to **Custom (from …)**; changes apply immediately without clicks. Saved presets from older versions load unchanged (the new stages default to off).
 
 ### Saving presets
 
@@ -104,7 +137,7 @@ It prints the address to open, e.g. `http://voicepi.local:8080/`. Open that from
 3. Tap **Start audio**.
 4. Tap **Stop audio** before changing devices.
 5. **Refresh devices** after plugging USB gear.
-6. Under **Voice**, pick a preset (e.g. **DJ R3X**) and fine-tune with the sliders.
+6. Tap a voice (e.g. **DJ R3X**) at the top of the page.
 
 ### Start at boot (one-time setup)
 
@@ -116,7 +149,7 @@ sudo sh install-service.sh
 After this, `uvc_pass` and the web page run at every boot. Everything else is on the page:
 
 - **Start audio automatically** — starts audio on the devices you picked when the Pi boots, and retries if the USB audio shows up late or gets unplugged and replugged. Pressing **Stop audio** pauses retries until you press **Start audio** again.
-- **Load this preset at startup** — tick it while a preset is selected to make that preset load at boot. The line underneath shows the current choice.
+- **Load this voice at startup** — tick it while a voice is selected to make that voice load at boot. The line underneath shows the current choice.
 
 The page remembers the devices from the last successful **Start audio**. Settings live in `~/.config/uvc-voicechanger/settings.ini`.
 

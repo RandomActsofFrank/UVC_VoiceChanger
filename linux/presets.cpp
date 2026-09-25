@@ -171,7 +171,7 @@ void PresetStore::load() {
         const std::string value = trim(s.substr(eq + 1));
         if (key == "name") {
             const std::string name = clean_name(value);
-            if (!name.empty()) {
+            if (!name.empty() && !is_builtin(cur->id)) {
                 cur->name = name;
             }
         } else {
@@ -231,11 +231,11 @@ std::vector<PresetInfo> PresetStore::list() const {
     const FxPresetInfo* presets = fx_presets(&count);
     for (int i = 0; i < count; i++) {
         const Entry* e = find(presets[i].id);
-        out.push_back({presets[i].id, e ? e->name : presets[i].name, true, e != nullptr});
+        out.push_back({presets[i].id, presets[i].name, true, e != nullptr, presets[i].voice});
     }
     for (const Entry& e : saved_) {
         if (!is_builtin(e.id)) {
-            out.push_back({e.id, e.name, false, false});
+            out.push_back({e.id, e.name, false, false, true});
         }
     }
     return out;

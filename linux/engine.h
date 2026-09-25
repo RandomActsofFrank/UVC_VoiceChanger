@@ -21,6 +21,9 @@ public:
     /* Safe to call while running; applied at the next audio period. */
     void set_fx(const FxParams& fx);
     FxParams fx() const;
+    /* A/B listening mode (FxMode); not saved. */
+    void set_mode(int mode);
+    int mode() const { return mode_.load(); }
 
     std::string status() const;
     std::string last_error() const;
@@ -42,4 +45,5 @@ private:
     std::atomic<unsigned long long> xruns_{0};
     FxParams fx_{};
     std::atomic<unsigned int> fx_version_{0};
+    std::atomic<int> mode_{kFxModeCharacter};
 };

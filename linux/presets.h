@@ -10,6 +10,7 @@ struct PresetInfo {
     std::string name;
     bool builtin;  /* ships with the app; can be restored to defaults */
     bool modified; /* builtin with saved changes */
+    bool voice;    /* main voice button (character voices and user presets) */
 };
 
 /*

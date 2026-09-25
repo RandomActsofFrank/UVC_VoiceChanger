@@ -15,6 +15,14 @@ void PassEngine::set_fx(const FxParams& fx) {
     fx_version_++;
 }
 
+void PassEngine::set_mode(int mode) {
+    if (mode < kFxModeBypass || mode > kFxModeCharacter) {
+        return;
+    }
+    mode_ = mode;
+    fx_version_++;
+}
+
 FxParams PassEngine::fx() const {
     std::lock_guard<std::mutex> lock(mu_);
     return fx_;
@@ -126,6 +134,7 @@ void PassEngine::loop() {
         return;
     }
 
+    dsp_enable_flush_to_zero();
     VoiceChain chain(alsa_rate(io), channels);
     chain.set_input_gain(cfg.mic_gain * cfg.amp_gain);
     unsigned int fx_seen = fx_version_.load() - 1;
@@ -133,7 +142,7 @@ void PassEngine::loop() {
     while (run_.load()) {
         const unsigned int fx_now = fx_version_.load();
         if (fx_now != fx_seen) {
-            chain.configure(fx());
+            chain.configure(fx(), mode_.load());
             fx_seen = fx_now;
         }
 

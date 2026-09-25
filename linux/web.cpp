@@ -61,11 +61,34 @@ label.opt input{width:auto;margin-right:.4em}
 #startupmsg{color:#aaa;font-size:.9em;margin-top:.2em}
 #fxmsg{margin-top:.6em;min-height:1.2em;color:#aaa;font-size:.9em}
 #fxmsg.err{color:#f66;border:0}
+#active{margin-top:.6em;padding:.8em;border-radius:6px;background:#1d2b1d;border-left:6px solid #2a2;font-size:1.3em;font-weight:700}
+#active.custom{background:#2b2615;border-left-color:#c90}
+#active small{display:block;font-size:.65em;font-weight:normal;color:#aaa}
+.voices{display:grid;grid-template-columns:1fr 1fr;gap:.5em;margin-top:.8em}
+.voices button{padding:1em .5em;font-size:1.1em;background:#222;color:#eee;border:2px solid #444;margin:0}
+.voices button.active{background:#2a5a2a;border-color:#6d6;color:#fff;font-weight:700}
+.ab{display:flex;gap:.5em;margin-top:.3em}
+.ab button{flex:1;background:#222;color:#eee;border:2px solid #444}
+.ab button.active{border-color:#6d6;font-weight:700}
+details{margin-top:2em;border-top:1px solid #333;padding-top:1em}
+summary{cursor:pointer;font-weight:600;color:#aaa}
+h3{font-size:1em;margin:1.5em 0 .2em;color:#aaa}
+.knob.sub{grid-template-columns:8.5em 1fr;color:#aaa}
+.knob.sub input{width:auto;justify-self:start}
 </style>
 </head>
 <body>
 <h1>UVC Voice Changer</h1>
 <p class="sub">Stereo &middot; 48 kHz &middot; 16-bit &middot; 2 ch</p>
+
+<div id="active">Loading&hellip;</div>
+<div class="voices" id="voices"></div>
+<label for="more">More voices</label>
+<select id="more"></select>
+<label class="opt"><input type="checkbox" id="startup">Load this voice at startup</label>
+<div id="startupmsg"></div>
+
+<h2>Audio</h2>
 <label for="input">Input device</label>
 <select id="input"></select>
 <label for="output">Output device</label>
@@ -79,7 +102,14 @@ label.opt input{width:auto;margin-right:.4em}
 <label class="opt"><input type="checkbox" id="autostart">Start audio automatically (at boot, and after the USB audio reconnects)</label>
 <label class="adv"><input type="checkbox" id="all">Show all ALSA device names (troubleshooting)</label>
 
-<h2>Voice</h2>
+<details id="advanced">
+<summary>Advanced: DSP tuning (not needed for normal use)</summary>
+<h3>A/B compare</h3>
+<div class="ab">
+<button id="ab0" data-mode="0">Bypass</button>
+<button id="ab1" data-mode="1">Classic DSP</button>
+<button id="ab2" data-mode="2">Character DSP</button>
+</div>
 <label for="preset">Preset</label>
 <select id="preset"></select>
 <div class="row">
@@ -87,12 +117,11 @@ label.opt input{width:auto;margin-right:.4em}
 <button id="saveas">Save as new&hellip;</button>
 <button id="reset">Restore defaults</button>
 </div>
-<label class="opt"><input type="checkbox" id="startup">Load this preset at startup</label>
-<div id="startupmsg"></div>
 <div id="fxmsg"></div>
 <label class="on"><input type="checkbox" id="enabled">Effects on</label>
 <div class="knob"><span>Volume dB</span><input type="range" id="volume_db" aria-label="Volume dB" min="-24" max="12" step="0.5"><span class="val" id="volume_db_v"></span></div>
 <div id="fx"></div>
+</details>
 <script>
 const $ = id => document.getElementById(id);
 
@@ -186,12 +215,53 @@ const FX = [
   {title: 'Ring modulator (robot buzz)', on: 'ring_on', knobs: [
     ['ring_freq', 'Frequency Hz', 5, 1000, 5],
     ['ring_mix', 'Mix', 0, 1, 0.05]]},
-  {title: 'Metal / echo', on: 'comb_on', knobs: [
-    ['comb_ms', 'Delay ms', 1, 300, 1],
+  {title: 'Metal / cavity / echo', on: 'comb_on', knobs: [
+    ['comb_ms', 'Delay ms', 0.2, 300, 0.1],
     ['comb_feedback', 'Feedback', 0, 0.9, 0.05],
+    ['comb_damp', 'Damping', 0, 0.9, 0.05],
     ['comb_mix', 'Mix', 0, 1, 0.05]]},
   {title: 'Clipping (grit)', on: 'clip_on', knobs: [
     ['clip_factor', 'Amount', 1, 10, 1]]},
+  {title: 'Character stages (master)', on: 'character_on', knobs: [
+    ['char_mix', 'Wet mix', 0, 1, 0.05]]},
+  {title: 'Vocal character (formant approximation)', on: 'vc_on', knobs: [
+    ['formant_scale', 'Size scale', 0.6, 1.6, 0.01],
+    ['formant_db', 'Formant dB', -12, 12, 0.5],
+    ['formant_q', 'Formant Q', 0.5, 10, 0.1],
+    ['nasal_db', 'Nasal dB', -12, 12, 0.5],
+    ['tilt_db', 'Tilt dB', -12, 12, 0.5]]},
+  {title: 'Compressor', on: 'comp_on', knobs: [
+    ['comp_threshold_db', 'Threshold dB', -60, 0, 1],
+    ['comp_ratio', 'Ratio', 1, 20, 0.5],
+    ['comp_attack_ms', 'Attack ms', 0.5, 100, 0.5],
+    ['comp_release_ms', 'Release ms', 5, 1000, 5],
+    ['comp_makeup_db', 'Makeup dB', -12, 24, 0.5]]},
+  {title: 'Resonators (wet)', on: 'res_on', knobs: [1, 2, 3, 4].flatMap(i => [
+    ['res' + i + '_on', 'Band ' + i + ' on', 'bool'],
+    ['res' + i + '_freq', 'Band ' + i + ' Hz', 50, 10000, 10],
+    ['res' + i + '_q', 'Band ' + i + ' Q', 0.3, 20, 0.1],
+    ['res' + i + '_gain_db', 'Band ' + i + ' dB', -18, 18, 0.5]])},
+  {title: 'Saturation (wet)', on: 'sat_on', knobs: [
+    ['sat_drive_db', 'Drive dB', 0, 36, 0.5],
+    ['sat_bias', 'Asymmetry', -0.5, 0.5, 0.01],
+    ['sat_mix', 'Mix', 0, 1, 0.05],
+    ['sat_out_db', 'Output dB', -24, 12, 0.5]]},
+  {title: 'Helmet / comms (wet)', on: 'helmet_on', knobs: [
+    ['helmet_low_hz', 'Low cut Hz', 50, 2000, 10],
+    ['helmet_high_hz', 'High cut Hz', 1000, 12000, 50],
+    ['helmet_reflect_ms', 'Reflection ms', 0.1, 29, 0.1],
+    ['helmet_reflect_fb', 'Refl. feedback', 0, 0.9, 0.05],
+    ['helmet_reflect_mix', 'Refl. mix', 0, 1, 0.05],
+    ['helmet_am_hz', 'AM Hz', 0.5, 500, 0.5],
+    ['helmet_am_depth', 'AM depth', 0, 1, 0.01]]},
+  {title: 'Final EQ', on: 'feq_on', knobs: [
+    ['feq_low_hz', 'Low shelf Hz', 40, 1000, 10],
+    ['feq_low_db', 'Low dB', -12, 12, 0.5],
+    ['feq_high_hz', 'High shelf Hz', 1000, 16000, 100],
+    ['feq_high_db', 'High dB', -12, 12, 0.5]]},
+  {title: 'Limiter (safety)', on: 'lim_on', knobs: [
+    ['lim_ceiling_db', 'Ceiling dB', -12, 0, 0.5],
+    ['lim_release_ms', 'Release ms', 5, 1000, 5]]},
 ];
 const KEYS = ['enabled', 'volume_db'];
 let sendTimer = null;
@@ -214,6 +284,18 @@ function buildFx() {
       row.className = 'knob';
       const name = document.createElement('span');
       name.textContent = label;
+      if (min === 'bool') {
+        row.className = 'knob sub';
+        const c = document.createElement('input');
+        c.type = 'checkbox';
+        c.id = key;
+        c.setAttribute('aria-label', s.title + ' ' + label);
+        c.onchange = fxChanged;
+        row.append(name, c);
+        box.appendChild(row);
+        KEYS.push(key);
+        continue;
+      }
       const r = document.createElement('input');
       Object.assign(r, {type: 'range', id: key, min: min, max: max, step: step});
       r.setAttribute('aria-label', s.title + ' ' + label);
@@ -276,12 +358,83 @@ function showFx(d) {
     if (el.type === 'checkbox') el.checked = !!d.fx[k];
     else el.value = d.fx[k];
   }
+  mode = d.mode;
+  renderVoices();
+  updateAb();
   updateLabels();
   updatePresetButtons();
   updateStartup();
   $('fxmsg').textContent = d.error || d.message || '';
   $('fxmsg').className = d.error ? 'err' : '';
 }
+
+let mode = 2;
+const MODE_NAMES = ['Bypass', 'Classic DSP', 'Character DSP'];
+
+function renderVoices() {
+  const cur = $('preset').value;
+  const box = $('voices');
+  box.innerHTML = '';
+  for (const p of presets.filter(p => p.voice)) {
+    const b = document.createElement('button');
+    b.textContent = p.name;
+    b.dataset.id = p.id;
+    b.onclick = () => selectVoice(p.id);
+    box.appendChild(b);
+  }
+  const more = $('more');
+  more.innerHTML = '';
+  more.appendChild(new Option('Choose\u2026', ''));
+  for (const p of presets.filter(p => !p.voice)) more.appendChild(new Option(p.name, p.id));
+  more.value = presets.some(p => !p.voice && p.id === cur) ? cur : '';
+  updateActive();
+}
+
+function updateActive() {
+  const cur = $('preset').value;
+  const p = presetById(cur);
+  const a = $('active');
+  a.className = p ? '' : 'custom';
+  a.textContent = p ? p.name : customLabel();
+  const note = [];
+  if (!p) note.push('Tuned by hand in Advanced; save it to keep it.');
+  if (mode !== 2) note.push('A/B compare is set to ' + MODE_NAMES[mode] + ' (Advanced).');
+  if (note.length) {
+    const s = document.createElement('small');
+    s.textContent = note.join(' ');
+    a.appendChild(s);
+  }
+  for (const b of $('voices').children) {
+    b.className = b.dataset.id === cur ? 'active' : '';
+    b.setAttribute('aria-pressed', b.dataset.id === cur ? 'true' : 'false');
+  }
+}
+
+function selectVoice(id) {
+  clearTimeout(sendTimer);
+  sendTimer = null;
+  $('preset').value = id;
+  updateActive();
+  presetPost('/api/fx', 'preset=' + encodeURIComponent(id));
+}
+
+function updateAb() {
+  for (let i = 0; i < 3; i++) $('ab' + i).className = i === mode ? 'active' : '';
+}
+
+for (let i = 0; i < 3; i++) {
+  $('ab' + i).onclick = async () => {
+    showFx(await api('/api/mode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: 'mode=' + i
+    }));
+  };
+}
+
+$('more').onchange = () => {
+  if ($('more').value) selectVoice($('more').value);
+};
 
 async function presetPost(path, body) {
   showFx(await api(path, {
@@ -374,6 +527,7 @@ function fxChanged() {
   if (custom) custom.textContent = customLabel();
   $('fxmsg').textContent = '';
   updateStartup();
+  updateActive();
   clearTimeout(sendTimer);
   sendTimer = setTimeout(sendFx, 80);
 }
@@ -714,6 +868,9 @@ public:
         } else if (req.method == "POST" && req.path == "/api/fx") {
             update_fx(req.body);
             send_response(fd, 200, "OK", json, fx_response());
+        } else if (req.method == "POST" && req.path == "/api/mode") {
+            engine_.set_mode(atoi(form_value(req.body, "mode").c_str()));
+            send_response(fd, 200, "OK", json, fx_response());
         } else if (req.method == "POST" && req.path == "/api/preset/save") {
             send_response(fd, 200, "OK", json, save_preset(req.body));
         } else if (req.method == "POST" && req.path == "/api/preset/reset") {
@@ -761,9 +918,11 @@ private:
             first = false;
             out += "{\"id\":\"" + json_escape(p.id) + "\",\"name\":\"" + json_escape(p.name) +
                    "\",\"builtin\":" + (p.builtin ? "true" : "false") +
-                   ",\"modified\":" + (p.modified ? "true" : "false") + "}";
+                   ",\"modified\":" + (p.modified ? "true" : "false") +
+                   ",\"voice\":" + (p.voice ? "true" : "false") + "}";
         }
-        return out + "],\"base\":\"" + json_escape(base_) + "\",\"error\":\"" + json_escape(error) +
+        return out + "],\"mode\":" + std::to_string(engine_.mode()) + ",\"base\":\"" + json_escape(base_) +
+               "\",\"error\":\"" + json_escape(error) +
                "\",\"message\":\"" + json_escape(message) + "\",\"fx\":" + fx_json(engine_.fx()) + "}";
     }
 
