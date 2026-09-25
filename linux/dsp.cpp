@@ -409,8 +409,8 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.feq_high_db = -2.0f;
         n.lim_on = true;
     } else if (!strcmp(id, "trooper")) {
-        /* Helmet + comms: band-limited, compressed, gritty, with short
-           plastic-shell reflections; some full-band dry keeps it intelligible. */
+        /* Helmet + comms: band-limited, compressed, gritty, with boxy
+           plastic-shell reflections; a little full-band dry keeps it intelligible. */
         n.pitch_on = true;
         n.pitch_semitones = -1.0f;
         n.character_on = true;
@@ -420,24 +420,24 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.comp_attack_ms = 3.0f;
         n.comp_release_ms = 60.0f;
         n.comp_makeup_db = 8.0f;
-        n.char_mix = 0.85f;
+        n.char_mix = 0.95f;
         n.res_on = true;
         set_helmet_resonances(&n);
         n.res1_q = 2.0f;
-        n.res1_gain_db = 2.0f;
+        n.res1_gain_db = 3.0f;
         n.res2_q = 2.5f;
-        n.res2_gain_db = 4.0f;
-        n.res3_gain_db = 5.0f;
-        n.res4_gain_db = 3.0f;
+        n.res2_gain_db = 5.0f;
+        n.res3_gain_db = 6.0f;
+        n.res4_gain_db = 4.0f;
         n.sat_on = true;
         n.sat_drive_db = 12.0f;
         n.sat_mix = 0.6f;
         n.helmet_on = true;
-        n.helmet_low_hz = 300.0f;
-        n.helmet_high_hz = 3800.0f;
+        n.helmet_low_hz = 350.0f;
+        n.helmet_high_hz = 3400.0f;
         n.helmet_reflect_ms = 1.2f;
-        n.helmet_reflect_fb = 0.35f;
-        n.helmet_reflect_mix = 0.35f;
+        n.helmet_reflect_fb = 0.45f;
+        n.helmet_reflect_mix = 0.5f;
         n.lim_on = true;
     } else if (!strcmp(id, "tie")) {
         /* Sealed flight mask over cockpit comms: narrower, harder compression,
@@ -451,27 +451,27 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.comp_attack_ms = 2.0f;
         n.comp_release_ms = 50.0f;
         n.comp_makeup_db = 10.0f;
-        n.char_mix = 0.9f;
+        n.char_mix = 0.97f;
         n.res_on = true;
         set_helmet_resonances(&n);
         n.res1_q = 2.0f;
         n.res1_gain_db = 3.0f;
-        n.res2_gain_db = 6.0f;
-        n.res3_gain_db = 4.0f;
+        n.res2_gain_db = 7.0f;
+        n.res3_gain_db = 5.0f;
         n.res4_q = 4.0f;
-        n.res4_gain_db = 2.0f;
+        n.res4_gain_db = 3.0f;
         n.sat_on = true;
         n.sat_drive_db = 15.0f;
         n.sat_bias = 0.15f;
         n.sat_mix = 0.7f;
         n.helmet_on = true;
-        n.helmet_low_hz = 450.0f;
-        n.helmet_high_hz = 2800.0f;
+        n.helmet_low_hz = 500.0f;
+        n.helmet_high_hz = 2600.0f;
         n.helmet_reflect_ms = 0.8f;
-        n.helmet_reflect_fb = 0.45f;
-        n.helmet_reflect_mix = 0.35f;
+        n.helmet_reflect_fb = 0.55f;
+        n.helmet_reflect_mix = 0.45f;
         n.helmet_am_hz = 50.0f;
-        n.helmet_am_depth = 0.08f;
+        n.helmet_am_depth = 0.12f;
         n.lim_on = true;
     } else if (!strcmp(id, "droid-voice")) {
         /* Metallic droid body: tuned resonances, ringing cavity, light ring mod. */
