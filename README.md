@@ -47,7 +47,7 @@ filters → ring modulator → metal/echo → volume → pitch → clipping.
 | High-pass / Low-pass | Cut bass / treble; "Steepness" cascades filters like the ESP |
 | Presence peak | Boost or cut a frequency band (nasal / tinny character) |
 | Ring modulator | Robot / Dalek buzz; "Mix" blends it with the dry voice |
-| Metal / echo | Short delay = metallic tin-can resonance; long delay = echo |
+| Metal / echo | Short delay = metallic tin-can tone; long delay = echo. Feedback 0 = no tail; raise it for ringing / repeats |
 | Clipping | Soft distortion / grit |
 
 Presets: **Clean**, **DJ R3X**, **Droid**, **Stormtrooper**, **TIE Pilot**, **Radio**, **Villain**. Picking a preset loads its settings; moving any slider switches to **Custom**. Changes apply immediately, even while audio is running.

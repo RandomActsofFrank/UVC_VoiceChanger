@@ -79,9 +79,9 @@ void set_defaults(FxParams* p) {
     p->peak_gain_db = 6.0f;
     p->ring_freq = 30.0f;
     p->ring_mix = 1.0f;
-    p->comb_ms = 5.0f;
-    p->comb_feedback = 0.5f;
-    p->comb_mix = 0.5f;
+    p->comb_ms = 3.0f;
+    p->comb_feedback = 0.0f;
+    p->comb_mix = 0.3f;
     p->clip_factor = 3;
 }
 
@@ -129,9 +129,9 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.ring_freq = 160.0f;
         n.ring_mix = 0.3f;
         n.comb_on = true;
-        n.comb_ms = 3.0f;
-        n.comb_feedback = 0.25f;
-        n.comb_mix = 0.35f;
+        n.comb_ms = 2.0f;
+        n.comb_feedback = 0.0f;
+        n.comb_mix = 0.3f;
         n.clip_on = true;
         n.clip_factor = 4;
     } else if (!strcmp(id, "droid")) {
@@ -159,7 +159,7 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.peak_gain_db = 6.0f;
         n.comb_on = true;
         n.comb_ms = 1.5f;
-        n.comb_feedback = 0.3f;
+        n.comb_feedback = 0.0f;
         n.comb_mix = 0.3f;
         n.clip_on = true;
         n.clip_factor = 6;
@@ -183,7 +183,7 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.ring_mix = 0.1f;
         n.comb_on = true;
         n.comb_ms = 2.5f;
-        n.comb_feedback = 0.35f;
+        n.comb_feedback = 0.0f;
         n.comb_mix = 0.3f;
         n.clip_on = true;
         n.clip_factor = 7;
@@ -349,11 +349,13 @@ void VoiceChain::process(int16_t* interleaved, unsigned int frames) {
                     x = x * (1.0f - p_.ring_mix) + x * ring * p_.ring_mix;
                 }
                 if (p_.comb_on) {
+                    /* Feedback 0 = single delayed copy (metallic tone, no tail);
+                       higher feedback adds ringing / repeats. */
                     const size_t read = (c.comb_w + comb_len - comb_delay_) % comb_len;
-                    const float y = x + p_.comb_feedback * c.comb_buf[read];
-                    c.comb_buf[c.comb_w] = y;
+                    const float delayed = c.comb_buf[read];
+                    c.comb_buf[c.comb_w] = x + p_.comb_feedback * delayed;
                     c.comb_w = (unsigned int)((c.comb_w + 1) % comb_len);
-                    x = x * (1.0f - p_.comb_mix) + y * p_.comb_mix;
+                    x = x * (1.0f - p_.comb_mix) + delayed * p_.comb_mix;
                 }
                 x *= volume_;
                 if (p_.pitch_on) {
