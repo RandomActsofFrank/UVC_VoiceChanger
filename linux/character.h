@@ -195,6 +195,11 @@ private:
     int hop_count_ = 0;
     float ka_[kOrder] = {}; /* analysis reflection coefficients */
     float ks_[kOrder] = {}; /* synthesis reflection coefficients */
+    /* Per-sample steps: coefficients glide to each new estimate over one
+       hop instead of jumping (a jump in a resonant 24-pole filter pops). */
+    float dka_[kOrder] = {};
+    float dks_[kOrder] = {};
+    int interp_left_ = 0;
     float ab_[kOrder] = {}; /* analysis lattice state */
     float sb_[kOrder] = {}; /* synthesis lattice state */
     float pre_x1_ = 0.0f;

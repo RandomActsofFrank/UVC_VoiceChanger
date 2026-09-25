@@ -336,7 +336,9 @@ void VocalTract::reset() {
     hop_count_ = 0;
     for (int i = 0; i < kOrder; i++) {
         ka_[i] = ks_[i] = ab_[i] = sb_[i] = 0.0f;
+        dka_[i] = dks_[i] = 0.0f;
     }
+    interp_left_ = 0;
     pre_x1_ = de_y1_ = 0.0f;
     gain_ = gain_target_ = 1.0f;
 }
@@ -394,6 +396,7 @@ void VocalTract::update() {
         }
         warped = levinson(rw, kOrder, aw, kw, &err_w);
     }
+    const bool keep_synth = lambda_ != 0.0f && !warped;
     if (!warped) {
         for (int i = 0; i <= kOrder; i++) {
             aw[i] = ac[i];
@@ -429,9 +432,16 @@ void VocalTract::update() {
         }
     }
 
+    const float inv_hop = 1.0f / (float)kHop;
     for (int i = 0; i < kOrder; i++) {
-        ka_[i] = kc[i];
-        ks_[i] = ks[i];
+        dka_[i] = (kc[i] - ka_[i]) * inv_hop;
+        /* A failed warped estimate keeps the previous tract shape rather than
+           dropping back to the unshifted one for a frame. */
+        dks_[i] = keep_synth ? 0.0f : (ks[i] - ks_[i]) * inv_hop;
+    }
+    interp_left_ = kHop;
+    if (keep_synth) {
+        return;
     }
     /* Excitation power is r0*err_c; the new all-pole filter has power gain
        1/err_s, so this keeps the output level equal to the input level. */
@@ -449,6 +459,14 @@ float VocalTract::analyze(float x) {
     if (++hop_count_ >= kHop) {
         hop_count_ = 0;
         update();
+    }
+    if (interp_left_ > 0) {
+        /* Synthesis steps here too, so analyze() and synth() stay in step. */
+        interp_left_--;
+        for (int m = 0; m < kOrder; m++) {
+            ka_[m] += dka_[m];
+            ks_[m] += dks_[m];
+        }
     }
     float f = pe;
     float b = pe;
