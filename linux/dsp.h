@@ -204,6 +204,9 @@ private:
         PitchState pitch;
         PitchState vt_pitch; /* same settings as pitch, so both stay in step */
         VocalTract vt;
+        float vt_ref_env = 0.0f; /* level guard: classic-path peak envelope */
+        float vt_out_env = 0.0f; /* level guard: vocal-model peak envelope */
+        float vt_guard = 1.0f;
         CombDelay comb;
         VocalCharacter vocal;
         Compressor comp;
@@ -240,4 +243,6 @@ private:
     float pitch_step_ = 0.0f;
     float clip_factor_ = 1.0f;
     float out_gain_ = 1.0f;
+    float env_decay_ = 0.0f;     /* level guard envelope decay per sample (~15 ms) */
+    float guard_release_ = 0.0f; /* level guard recovery per sample (~30 ms) */
 };

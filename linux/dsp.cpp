@@ -251,33 +251,18 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.clip_on = true;
         n.clip_factor = 4;
     } else if (!strcmp(id, "r3x-vocal")) {
-        /* R3X from a different vocal system: a smaller, brighter, more
-           resonant tract (formants moved independently of pitch), a nasal
-           resonance and forward presence. No ring mod, comb or clipping. */
-        n.pitch_on = true;
-        n.pitch_semitones = 1.0f;
+        /* The classic DJ R3X chain (speaker filter, presence, light ring mod,
+           short metallic comb, clipping) with the vocal model layered in:
+           a slightly smaller tract independent of pitch, plus a nasal peak. */
+        fx_apply_preset("r3x", &n);
         n.vt_on = true;
-        n.vt_formant = 1.15f;
-        n.vt_resonance = 0.4f;
-        n.vt_mix = 0.9f;
-        n.hp_on = true;
-        n.hp_freq = 200.0f;
-        n.hp_cascade = 2;
-        n.lp_on = true;
-        n.lp_freq = 7500.0f;
-        n.peak_on = true;
-        n.peak_freq = 2800.0f;
-        n.peak_q = 1.2f;
-        n.peak_gain_db = 4.0f;
+        n.vt_formant = 1.1f;
+        n.vt_resonance = 0.2f;
+        n.vt_mix = 0.7f;
         n.character_on = true;
         n.vc_on = true;
         n.formant_db = 0.0f;
-        n.nasal_db = 5.0f;
-        n.tilt_db = 2.0f;
-        n.comp_on = true;
-        n.comp_threshold_db = -26.0f;
-        n.comp_ratio = 3.0f;
-        n.comp_makeup_db = 6.0f;
+        n.nasal_db = 4.0f;
         n.char_mix = 0.0f;
         n.lim_on = true;
     } else if (!strcmp(id, "droid")) {
@@ -734,6 +719,8 @@ void VoiceChain::apply(const FxParams& in) {
     pitch_step_ = (1.0f - ratio) / (kPitchWindowSec * sr);
     clip_factor_ = 1.0f + p_.clip_factor / 6.0f;
     out_gain_ = powf(10.0f, p_.out_db / 20.0f);
+    env_decay_ = expf(-1.0f / (0.015f * sr));
+    guard_release_ = expf(-1.0f / (0.030f * sr));
 }
 
 /* Clear delay tails so the previous voice doesn't bleed into the new one.
@@ -856,8 +843,19 @@ void VoiceChain::process(int16_t* interleaved, unsigned int frames) {
                         c.vt_pitch.phase = c.pitch.phase;
                         e = pitch_sample(c.vt_pitch, e);
                     }
-                    const float voiced = c.vt.synth(e);
+                    float voiced = c.vt.synth(e);
                     const float classic = p_.pitch_on ? pitch_sample(c.pitch, x) : x;
+                    /* Level guard: at onsets (plosives) the tract estimate still
+                       describes the preceding silence and can blow the burst up.
+                       Never let the vocal model exceed the classic path by >3 dB. */
+                    const float ar = fabsf(classic);
+                    const float ao = fabsf(voiced);
+                    c.vt_ref_env = ar > c.vt_ref_env * env_decay_ ? ar : c.vt_ref_env * env_decay_;
+                    c.vt_out_env = ao > c.vt_out_env * env_decay_ ? ao : c.vt_out_env * env_decay_;
+                    const float limit = 1.4f * c.vt_ref_env + 1.0e-4f;
+                    const float target = c.vt_out_env > limit ? limit / c.vt_out_env : 1.0f;
+                    c.vt_guard = target < c.vt_guard ? target : target + (c.vt_guard - target) * guard_release_;
+                    voiced *= c.vt_guard;
                     x = classic + (voiced - classic) * p_.vt_mix;
                 } else if (p_.pitch_on) {
                     x = pitch_sample(c.pitch, x);
