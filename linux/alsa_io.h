@@ -20,7 +20,8 @@ typedef struct {
     int verbose;
     int use_cli;
     int web_port;
-    char preset[32]; /* voice preset id applied at startup */
+    char preset[32];        /* voice preset id applied at startup; empty = saved choice */
+    char presets_path[256]; /* saved presets file; empty = default location */
 } EngineConfig;
 
 typedef struct {

@@ -51,7 +51,7 @@ void engine_config_defaults(EngineConfig* cfg) {
     cfg->verbose = 1;
     cfg->use_cli = 0;
     cfg->web_port = 8080;
-    snprintf(cfg->preset, sizeof(cfg->preset), "%s", "clean");
+    cfg->preset[0] = '\0'; /* empty = saved startup preset, else clean */
 }
 
 static int looks_like_play3(const char* name) {
@@ -115,7 +115,9 @@ void engine_print_usage(const char* argv0) {
             "  --port N               Web page port (default: 8080)\n"
             "  --cli                  Start audio immediately, no web page\n"
             "  --preset ID            Voice preset: clean, r3x, droid, stormtrooper,\n"
-            "                         tiepilot, radio, villain\n"
+            "                         tiepilot, radio, villain, or a saved preset id\n"
+            "  --presets FILE         Saved presets file\n"
+            "                         (default: ~/.config/uvc-voicechanger/presets.ini)\n"
             "  --list                 List ALSA PCM devices and exit\n"
             "  --input DEV            Capture device\n"
             "  --output DEV           Playback device\n"
@@ -144,6 +146,9 @@ int engine_parse_args(int argc, char** argv, EngineConfig* cfg) {
             i++;
         } else if (!strcmp(a, "--preset") && next) {
             snprintf(cfg->preset, sizeof(cfg->preset), "%s", next);
+            i++;
+        } else if (!strcmp(a, "--presets") && next) {
+            snprintf(cfg->presets_path, sizeof(cfg->presets_path), "%s", next);
             i++;
         } else if (!strcmp(a, "--cli")) {
             cfg->use_cli = 1;

@@ -7,6 +7,8 @@
 #include "web.h"
 
 #include "engine.h"
+#include "presets.h"
+#include "settings.h"
 
 #include <arpa/inet.h>
 #include <ctype.h>
@@ -18,6 +20,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <string>
@@ -53,6 +56,11 @@ label.on{font-weight:600}
 .knob input{width:100%}
 .val{text-align:right;color:#aaa;font-variant-numeric:tabular-nums}
 fieldset.off .knob{opacity:.4}
+label.opt{font-weight:normal;margin-top:.9em}
+label.opt input{width:auto;margin-right:.4em}
+#startupmsg{color:#aaa;font-size:.9em;margin-top:.2em}
+#fxmsg{margin-top:.6em;min-height:1.2em;color:#aaa;font-size:.9em}
+#fxmsg.err{color:#f66;border:0}
 </style>
 </head>
 <body>
@@ -68,11 +76,20 @@ fieldset.off .knob{opacity:.4}
 <button id="stop">Stop audio</button>
 </div>
 <div id="status" class="idle">Loading&hellip;</div>
+<label class="opt"><input type="checkbox" id="autostart">Start audio automatically (at boot, and after the USB audio reconnects)</label>
 <label class="adv"><input type="checkbox" id="all">Show all ALSA device names (troubleshooting)</label>
 
 <h2>Voice</h2>
 <label for="preset">Preset</label>
 <select id="preset"></select>
+<div class="row">
+<button id="save">Save</button>
+<button id="saveas">Save as new&hellip;</button>
+<button id="reset">Restore defaults</button>
+</div>
+<label class="opt"><input type="checkbox" id="startup">Load this preset at startup</label>
+<div id="startupmsg"></div>
+<div id="fxmsg"></div>
 <label class="on"><input type="checkbox" id="enabled">Effects on</label>
 <div class="knob"><span>Volume dB</span><input type="range" id="volume_db" aria-label="Volume dB" min="-24" max="12" step="0.5"><span class="val" id="volume_db_v"></span></div>
 <div id="fx"></div>
@@ -222,15 +239,36 @@ function updateLabels() {
   for (const s of FX) $(s.on + '_box').className = $(s.on).checked ? '' : 'off';
 }
 
+let presets = [];
+let base = '';
+
+function presetById(id) {
+  return presets.find(p => p.id === id);
+}
+
+function customLabel() {
+  const p = presetById(base);
+  return p ? 'Custom (from ' + p.name + ')' : 'Custom';
+}
+
+function updatePresetButtons() {
+  const p = presetById(base);
+  $('save').disabled = !p;
+  $('save').textContent = p ? 'Save to ' + p.name : 'Save';
+  $('reset').disabled = !p;
+  $('reset').textContent = p && !p.builtin ? 'Delete preset' : 'Restore defaults';
+}
+
 function showFx(d) {
+  presets = d.presets;
+  base = d.base;
   const sel = $('preset');
-  if (!sel.options.length) {
-    for (const p of d.presets.concat([{id: 'custom', name: 'Custom'}])) {
-      const o = document.createElement('option');
-      o.value = p.id;
-      o.textContent = p.name;
-      sel.appendChild(o);
-    }
+  sel.innerHTML = '';
+  for (const p of presets.concat([{id: 'custom', name: customLabel()}])) {
+    const o = document.createElement('option');
+    o.value = p.id;
+    o.textContent = p.name + (p.modified ? ' (edited)' : '');
+    sel.appendChild(o);
   }
   sel.value = d.fx.preset;
   for (const k of KEYS) {
@@ -239,7 +277,88 @@ function showFx(d) {
     else el.value = d.fx[k];
   }
   updateLabels();
+  updatePresetButtons();
+  updateStartup();
+  $('fxmsg').textContent = d.error || d.message || '';
+  $('fxmsg').className = d.error ? 'err' : '';
 }
+
+async function presetPost(path, body) {
+  showFx(await api(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: body
+  }));
+  showSettings(await api('/api/settings'));
+}
+
+let settings = null;
+
+function updateStartup() {
+  if (!settings) return;
+  const cur = $('preset').value;
+  $('startup').disabled = !cur || cur === 'custom';
+  $('startup').checked = cur === settings.startup_preset;
+  $('startupmsg').textContent = 'Loads at startup: ' + settings.startup_name;
+}
+
+function showSettings(s) {
+  settings = s;
+  $('autostart').checked = s.autostart;
+  updateStartup();
+}
+
+async function postSettings(body) {
+  const s = await api('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: body
+  });
+  showSettings(s);
+  return s;
+}
+
+$('autostart').onchange = async () => {
+  const s = await postSettings('autostart=' + ($('autostart').checked ? 1 : 0) +
+                               '&input=' + encodeURIComponent($('input').value) +
+                               '&output=' + encodeURIComponent($('output').value));
+  if (s.error) show(s.error, 'err');
+};
+
+$('startup').onchange = async () => {
+  const id = $('startup').checked ? $('preset').value : 'clean';
+  const s = await postSettings('startup_preset=' + encodeURIComponent(id));
+  if (s.error) {
+    $('fxmsg').textContent = s.error;
+    $('fxmsg').className = 'err';
+  }
+};
+
+$('save').onclick = async () => {
+  const p = presetById(base);
+  if (p && confirm('Overwrite "' + p.name + '" with the current settings?')) {
+    await flushFx();
+    presetPost('/api/preset/save', 'id=' + encodeURIComponent(p.id));
+  }
+};
+
+$('saveas').onclick = async () => {
+  const name = (prompt('Name for the new preset:') || '').trim();
+  if (!name) return;
+  const existing = presets.find(p => p.name.toLowerCase() === name.toLowerCase());
+  if (existing && !confirm('"' + existing.name + '" already exists. Overwrite it?')) return;
+  await flushFx();
+  presetPost('/api/preset/save', 'name=' + encodeURIComponent(name));
+};
+
+$('reset').onclick = () => {
+  const p = presetById(base);
+  if (!p) return;
+  const q = p.builtin
+    ? 'Restore "' + p.name + '" to its original settings? Your saved changes to it will be lost.'
+    : 'Delete "' + p.name + '"?';
+  if (confirm(q)) presetPost('/api/preset/reset', 'id=' + encodeURIComponent(p.id));
+};
 
 function fxBody() {
   return KEYS.map(k => {
@@ -251,25 +370,38 @@ function fxBody() {
 function fxChanged() {
   updateLabels();
   $('preset').value = 'custom';
+  const custom = $('preset').querySelector('option[value="custom"]');
+  if (custom) custom.textContent = customLabel();
+  $('fxmsg').textContent = '';
+  updateStartup();
   clearTimeout(sendTimer);
-  sendTimer = setTimeout(() => api('/api/fx', {
+  sendTimer = setTimeout(sendFx, 80);
+}
+
+function sendFx() {
+  sendTimer = null;
+  return api('/api/fx', {
     method: 'POST',
     headers: {'Content-Type': 'application/x-www-form-urlencoded'},
     body: fxBody()
-  }), 80);
+  });
 }
 
-$('preset').onchange = async () => {
+async function flushFx() {
+  if (sendTimer) {
+    clearTimeout(sendTimer);
+    await sendFx();
+  }
+}
+
+$('preset').onchange = () => {
   if ($('preset').value === 'custom') return;
-  showFx(await api('/api/fx', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-    body: 'preset=' + encodeURIComponent($('preset').value)
-  }));
+  presetPost('/api/fx', 'preset=' + encodeURIComponent($('preset').value));
 };
 
 buildFx();
 api('/api/fx').then(showFx);
+api('/api/settings').then(showSettings);
 refresh();
 </script>
 </body>
@@ -512,12 +644,45 @@ void send_response(int fd, int code, const char* reason, const char* type, const
 
 class WebServer {
 public:
-    explicit WebServer(const EngineConfig& defaults) : cfg_(defaults) {
+    explicit WebServer(const EngineConfig& defaults)
+        : cfg_(defaults),
+          store_(defaults.presets_path),
+          settings_path_(settings_path_for(defaults.presets_path)) {
         cfg_.rate = 48000;
         cfg_.channels = 2;
+        settings_.load(settings_path_);
+        if (!settings_.input.empty() && !settings_.output.empty()) {
+            snprintf(cfg_.input_dev, sizeof(cfg_.input_dev), "%s", settings_.input.c_str());
+            snprintf(cfg_.output_dev, sizeof(cfg_.output_dev), "%s", settings_.output.c_str());
+        }
         FxParams fx;
-        if (fx_apply_preset(cfg_.preset, &fx)) {
+        if (store_.get(cfg_.preset, &fx)) {
             engine_.set_fx(fx);
+            base_ = cfg_.preset;
+        }
+        if (settings_.autostart) {
+            fprintf(stderr, "Autostart on: starting audio with %s -> %s\n", cfg_.input_dev, cfg_.output_dev);
+        }
+    }
+
+    /* Called about twice a second: autostart / restart audio if enabled. */
+    void tick() {
+        if (!settings_.autostart || user_stopped_ || engine_.running()) {
+            return;
+        }
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        if (now.tv_sec < next_try_) {
+            return;
+        }
+        if (engine_.start(cfg_)) {
+            fprintf(stderr, "Audio started automatically.\n");
+            retry_sec_ = 2;
+            return;
+        }
+        next_try_ = now.tv_sec + retry_sec_;
+        if (retry_sec_ < 30) {
+            retry_sec_ *= 2;
         }
     }
 
@@ -537,13 +702,22 @@ public:
         } else if (req.method == "POST" && req.path == "/api/start") {
             send_response(fd, 200, "OK", json, start(req.body));
         } else if (req.method == "POST" && req.path == "/api/stop") {
+            user_stopped_ = true;
             engine_.stop();
             send_response(fd, 200, "OK", json, status_json(""));
+        } else if (req.method == "GET" && req.path == "/api/settings") {
+            send_response(fd, 200, "OK", json, settings_json(""));
+        } else if (req.method == "POST" && req.path == "/api/settings") {
+            send_response(fd, 200, "OK", json, update_settings(req.body));
         } else if (req.method == "GET" && req.path == "/api/fx") {
             send_response(fd, 200, "OK", json, fx_response());
         } else if (req.method == "POST" && req.path == "/api/fx") {
             update_fx(req.body);
             send_response(fd, 200, "OK", json, fx_response());
+        } else if (req.method == "POST" && req.path == "/api/preset/save") {
+            send_response(fd, 200, "OK", json, save_preset(req.body));
+        } else if (req.method == "POST" && req.path == "/api/preset/reset") {
+            send_response(fd, 200, "OK", json, reset_preset(req.body));
         } else {
             send_response(fd, 404, "Not Found", "text/plain", "Not found\n");
         }
@@ -577,30 +751,103 @@ private:
                "\",\"error\":\"" + json_escape(error) + "\",\"periods\":" + periods + "}";
     }
 
-    std::string fx_response() {
-        int count = 0;
-        const FxPresetInfo* presets = fx_presets(&count);
+    std::string fx_response(const std::string& error = "", const std::string& message = "") {
         std::string out = "{\"presets\":[";
-        for (int i = 0; i < count; i++) {
-            if (i) {
+        bool first = true;
+        for (const PresetInfo& p : store_.list()) {
+            if (!first) {
                 out += ",";
             }
-            out += std::string("{\"id\":\"") + presets[i].id + "\",\"name\":\"" +
-                   json_escape(presets[i].name) + "\"}";
+            first = false;
+            out += "{\"id\":\"" + json_escape(p.id) + "\",\"name\":\"" + json_escape(p.name) +
+                   "\",\"builtin\":" + (p.builtin ? "true" : "false") +
+                   ",\"modified\":" + (p.modified ? "true" : "false") + "}";
         }
-        return out + "],\"fx\":" + fx_json(engine_.fx()) + "}";
+        return out + "],\"base\":\"" + json_escape(base_) + "\",\"error\":\"" + json_escape(error) +
+               "\",\"message\":\"" + json_escape(message) + "\",\"fx\":" + fx_json(engine_.fx()) + "}";
     }
 
     void update_fx(const std::string& body) {
         FxParams fx = engine_.fx();
         std::string preset;
         if (form_find(body, "preset", &preset)) {
-            fx_apply_preset(preset.c_str(), &fx);
+            if (!store_.get(preset, &fx)) {
+                return;
+            }
+            base_ = preset;
         } else {
             fx_from_form(body, &fx);
             snprintf(fx.preset, sizeof(fx.preset), "%s", "custom");
         }
         engine_.set_fx(fx);
+    }
+
+    std::string preset_name(const std::string& id) {
+        for (const PresetInfo& p : store_.list()) {
+            if (p.id == id) {
+                return p.name;
+            }
+        }
+        return id;
+    }
+
+    /* Make the saved preset the active one, keeping the current sound. */
+    void select_saved(const std::string& id) {
+        FxParams fx = engine_.fx();
+        snprintf(fx.preset, sizeof(fx.preset), "%s", id.c_str());
+        engine_.set_fx(fx);
+        base_ = id;
+    }
+
+    std::string save_preset(const std::string& body) {
+        std::string err;
+        std::string id;
+        std::string name;
+        if (form_find(body, "id", &id)) {
+            if (!store_.save(id, engine_.fx(), &err)) {
+                return fx_response(err);
+            }
+        } else if (form_find(body, "name", &name)) {
+            id = store_.save_as(name, engine_.fx(), &err);
+            if (id.empty()) {
+                return fx_response(err);
+            }
+        } else {
+            return fx_response("Nothing to save.");
+        }
+        select_saved(id);
+        return fx_response("", "Saved \"" + preset_name(id) + "\".");
+    }
+
+    std::string reset_preset(const std::string& body) {
+        const std::string id = form_value(body, "id");
+        const std::string name = preset_name(id);
+        const bool builtin = store_.is_builtin(id);
+        std::string err;
+        if (!store_.reset(id, &err)) {
+            return fx_response(err);
+        }
+        if (builtin) {
+            FxParams fx;
+            store_.get(id, &fx);
+            engine_.set_fx(fx);
+            base_ = id;
+            return fx_response("", "Restored \"" + name + "\" to its original settings.");
+        }
+        if (base_ == id) {
+            FxParams fx = engine_.fx();
+            snprintf(fx.preset, sizeof(fx.preset), "%s", "custom");
+            engine_.set_fx(fx);
+            base_.clear();
+        }
+        if (settings_.startup_preset == id) {
+            settings_.startup_preset.clear();
+            std::string save_err;
+            if (!settings_.save(settings_path_, &save_err)) {
+                fprintf(stderr, "%s\n", save_err.c_str());
+            }
+        }
+        return fx_response("", "Deleted \"" + name + "\".");
     }
 
     static bool device_known(const std::string& id, bool capture) {
@@ -631,13 +878,77 @@ private:
 
         snprintf(cfg_.input_dev, sizeof(cfg_.input_dev), "%s", in.c_str());
         snprintf(cfg_.output_dev, sizeof(cfg_.output_dev), "%s", out.c_str());
-        if (!engine_.start(cfg_) && engine_.last_error().empty()) {
-            return status_json("Failed to start audio engine");
+        user_stopped_ = false;
+        if (!engine_.start(cfg_)) {
+            return status_json(engine_.last_error().empty() ? "Failed to start audio engine" : "");
+        }
+        if (settings_.input != in || settings_.output != out) {
+            settings_.input = in;
+            settings_.output = out;
+            std::string err;
+            if (!settings_.save(settings_path_, &err)) {
+                fprintf(stderr, "%s\n", err.c_str());
+            }
         }
         return status_json("");
     }
 
+    std::string settings_json(const std::string& error) {
+        const std::string startup = settings_.startup_preset.empty() ? "clean" : settings_.startup_preset;
+        return std::string("{\"autostart\":") + (settings_.autostart ? "true" : "false") +
+               ",\"input\":\"" + json_escape(settings_.input) + "\",\"output\":\"" +
+               json_escape(settings_.output) + "\",\"startup_preset\":\"" + json_escape(startup) +
+               "\",\"startup_name\":\"" + json_escape(preset_name(startup)) + "\",\"error\":\"" +
+               json_escape(error) + "\"}";
+    }
+
+    std::string update_settings(const std::string& body) {
+        AppSettings next = settings_;
+        std::string v;
+        if (form_find(body, "autostart", &v)) {
+            next.autostart = v == "1" || v == "true";
+            std::string in;
+            std::string out;
+            if (next.autostart && form_find(body, "input", &in) && form_find(body, "output", &out)) {
+                if (!device_known(in, true) || !device_known(out, false)) {
+                    return settings_json("Device not found. Refresh devices and try again.");
+                }
+                next.input = in;
+                next.output = out;
+            }
+            if (next.autostart && (next.input.empty() || next.output.empty())) {
+                return settings_json("Select an input and output device first.");
+            }
+        }
+        if (form_find(body, "startup_preset", &v)) {
+            FxParams tmp;
+            if (!store_.get(v, &tmp)) {
+                return settings_json("Unknown preset: " + v);
+            }
+            next.startup_preset = v;
+        }
+        std::string err;
+        if (!next.save(settings_path_, &err)) {
+            return settings_json(err);
+        }
+        settings_ = next;
+        if (!engine_.running() && !settings_.input.empty() && !settings_.output.empty()) {
+            snprintf(cfg_.input_dev, sizeof(cfg_.input_dev), "%s", settings_.input.c_str());
+            snprintf(cfg_.output_dev, sizeof(cfg_.output_dev), "%s", settings_.output.c_str());
+        }
+        retry_sec_ = 2;
+        next_try_ = 0;
+        return settings_json("");
+    }
+
     EngineConfig cfg_;
+    PresetStore store_;
+    std::string settings_path_;
+    AppSettings settings_;
+    std::string base_; /* preset the current settings came from */
+    bool user_stopped_ = false; /* Stop pressed: no autostart retries until Start */
+    time_t next_try_ = 0;
+    int retry_sec_ = 2;
     PassEngine engine_;
 };
 
@@ -660,6 +971,11 @@ int run_web(const EngineConfig* defaults, volatile sig_atomic_t* keep_running) {
     addr.sin_port = htons((uint16_t)port);
     if (bind(lfd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         fprintf(stderr, "Cannot listen on port %d: %s\n", port, strerror(errno));
+        if (errno == EADDRINUSE) {
+            fprintf(stderr,
+                    "Is the boot service already running? Stop it first:\n"
+                    "  sudo systemctl stop uvc-voicechanger\n");
+        }
         close(lfd);
         return 1;
     }
@@ -672,14 +988,17 @@ int run_web(const EngineConfig* defaults, volatile sig_atomic_t* keep_running) {
     char host[256] = "raspberrypi";
     gethostname(host, sizeof(host) - 1);
     fprintf(stderr,
-            "UVC Linux audio engine — Milestone 1 web config\n"
+            "UVC Linux audio engine — web config\n"
             "  open http://%s.local:%d/ from a phone or computer on the same network\n"
+            "  presets file: %s\n"
             "  Ctrl+C to quit\n",
             host,
-            port);
+            port,
+            defaults->presets_path);
 
     WebServer server(*defaults);
     while (*keep_running) {
+        server.tick();
         struct pollfd p = {lfd, POLLIN, 0};
         int r = poll(&p, 1, 500);
         if (r < 0) {

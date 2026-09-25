@@ -50,9 +50,15 @@ filters → ring modulator → metal/echo → volume → pitch → clipping.
 | Metal / echo | Short delay = metallic tin-can tone; long delay = echo. Feedback 0 = no tail; raise it for ringing / repeats |
 | Clipping | Soft distortion / grit |
 
-Presets: **Clean**, **DJ R3X**, **Droid**, **Stormtrooper**, **TIE Pilot**, **Radio**, **Villain**. Picking a preset loads its settings; moving any slider switches to **Custom**. Changes apply immediately, even while audio is running.
+Presets: **Clean**, **DJ R3X**, **Droid**, **Stormtrooper**, **TIE Pilot**, **Radio**, **Villain**. Picking a preset loads its settings; moving any slider switches to **Custom (from …)**. Changes apply immediately, even while audio is running.
 
-Settings are not saved yet — restarting `uvc_pass` goes back to the startup preset (`--preset r3x` to start as DJ R3X).
+### Saving presets
+
+- **Save to …** overwrites the preset you started from with the current sliders.
+- **Save as new…** asks for a name. Using an existing preset's name overwrites that preset (after confirming).
+- **Restore defaults** puts a built-in preset back to its original settings. For presets you created, this button is **Delete preset**.
+
+Built-in presets you've changed show **(edited)**. Saved presets live in `~/.config/uvc-voicechanger/presets.ini` on the Pi (change with `--presets FILE`) and survive restarts. `--preset ID` works with saved presets too; a new preset's ID is its name in lowercase with dashes, e.g. "My R3X" → `my-r3x`.
 
 ### 1. Clone from GitHub (on the Pi)
 
@@ -99,6 +105,29 @@ It prints the address to open, e.g. `http://voicepi.local:8080/`. Open that from
 4. Tap **Stop audio** before changing devices.
 5. **Refresh devices** after plugging USB gear.
 6. Under **Voice**, pick a preset (e.g. **DJ R3X**) and fine-tune with the sliders.
+
+### Start at boot (one-time setup)
+
+```bash
+cd ~/UVC_VoiceChanger/linux
+sudo sh install-service.sh
+```
+
+After this, `uvc_pass` and the web page run at every boot. Everything else is on the page:
+
+- **Start audio automatically** — starts audio on the devices you picked when the Pi boots, and retries if the USB audio shows up late or gets unplugged and replugged. Pressing **Stop audio** pauses retries until you press **Start audio** again.
+- **Load this preset at startup** — tick it while a preset is selected to make that preset load at boot. The line underneath shows the current choice.
+
+The page remembers the devices from the last successful **Start audio**. Settings live in `~/.config/uvc-voicechanger/settings.ini`.
+
+With the service installed, stop it before running `./uvc_pass` by hand, and restart it after rebuilding:
+
+```bash
+sudo systemctl stop uvc-voicechanger      # before running ./uvc_pass manually
+sudo systemctl restart uvc-voicechanger   # after git pull + make
+journalctl -u uvc-voicechanger -f         # view its log
+sudo sh install-service.sh --remove       # uninstall
+```
 
 Use `--port N` to change the port. The page has no password, so only run it on a network you trust. Ctrl+C in the SSH session quits it and stops audio.
 

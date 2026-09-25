@@ -5,6 +5,8 @@
 
 #include "alsa_io.h"
 #include "engine.h"
+#include "presets.h"
+#include "settings.h"
 #include "web.h"
 
 #include <math.h>
@@ -43,7 +45,7 @@ static int run_cli(EngineConfig& cfg) {
 
     PassEngine engine;
     FxParams fx;
-    fx_apply_preset(cfg.preset, &fx);
+    PresetStore(cfg.presets_path).get(cfg.preset, &fx);
     engine.set_fx(fx);
     g_cli_engine = &engine;
     if (!engine.start(cfg)) {
@@ -91,10 +93,20 @@ int main(int argc, char** argv) {
     if (cfg.list_only) {
         return alsa_list_devices() == 0 ? 0 : 1;
     }
+    if (!cfg.presets_path[0]) {
+        snprintf(cfg.presets_path, sizeof(cfg.presets_path), "%s", default_presets_path().c_str());
+    }
     FxParams check;
-    if (!fx_apply_preset(cfg.preset, &check)) {
+    if (cfg.preset[0] && !PresetStore(cfg.presets_path).get(cfg.preset, &check)) {
         fprintf(stderr, "Unknown preset: %s\n", cfg.preset);
         return 1;
+    }
+    if (!cfg.preset[0]) {
+        AppSettings settings;
+        settings.load(settings_path_for(cfg.presets_path));
+        const std::string saved = settings.startup_preset;
+        const bool usable = !saved.empty() && PresetStore(cfg.presets_path).get(saved, &check);
+        snprintf(cfg.preset, sizeof(cfg.preset), "%s", usable ? saved.c_str() : "clean");
     }
 
     signal(SIGINT, on_signal);
