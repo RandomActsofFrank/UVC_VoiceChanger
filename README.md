@@ -38,7 +38,7 @@ USB playback (speakers / headphones / amp)
 
 ### Voices
 
-The top of the page is the voice picker: tap **Clean / Bypass**, **DJ R3X**, **DJ R3X (vocal model)**, **TIE Pilot**, **Stormtrooper** or **Droid** and the whole character loads at once. The active voice is shown in the box above the buttons. No tuning is needed. Switching while audio is running crossfades over about 10 ms (one audio period out, one in), clears the old voice's echo tail, and doesn't restart the audio engine.
+The top of the page is the voice picker: tap **Clean / Bypass**, **DJ R3X**, **TIE Pilot**, **Stormtrooper** or **Droid** (R3X, TIE Pilot and Stormtrooper also come as a **(vocal model)** version) and the whole character loads at once. The active voice is shown in the box above the buttons. No tuning is needed. Switching while audio is running crossfades over about 10 ms (one audio period out, one in), clears the old voice's echo tail, and doesn't restart the audio engine.
 
 **More voices** has the extras: Dark Mechanical, Quirky Droid, the original (classic) Stormtrooper / TIE Pilot / Droid, Radio and Villain. Presets you save yourself show up as voice buttons too.
 

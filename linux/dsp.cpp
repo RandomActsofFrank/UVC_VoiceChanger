@@ -110,7 +110,9 @@ const FxPresetInfo kPresets[] = {
     {"r3x", "DJ R3X", true},
     {"r3x-vocal", "DJ R3X (vocal model)", true},
     {"tie", "TIE Pilot", true},
+    {"tie-vocal", "TIE Pilot (vocal model)", true},
     {"trooper", "Stormtrooper", true},
+    {"trooper-vocal", "Stormtrooper (vocal model)", true},
     {"droid-voice", "Droid", true},
     {"dark-mech", "Dark Mechanical", false},
     {"quirky-droid", "Quirky Droid", false},
@@ -265,6 +267,25 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.nasal_db = 4.0f;
         n.char_mix = 0.0f;
         n.lim_on = true;
+    } else if (!strcmp(id, "tie-vocal")) {
+        /* TIE Pilot with the vocal model ahead of the helmet/comms chain: a
+           slightly larger, masked tract with a touch of cavity resonance.
+           Pitch now moves only the excitation, so the -1.5 st drop no longer
+           drags the formants down with it. */
+        fx_apply_preset("tie", &n);
+        n.vt_on = true;
+        n.vt_formant = 0.92f;
+        n.vt_resonance = 0.3f;
+        n.vt_mix = 0.8f;
+    } else if (!strcmp(id, "trooper-vocal")) {
+        /* Stormtrooper with the vocal model ahead of the helmet/comms chain:
+           a slightly larger tract, mild resonance, so the helmet colours a
+           different voice rather than the performer's own. */
+        fx_apply_preset("trooper", &n);
+        n.vt_on = true;
+        n.vt_formant = 0.95f;
+        n.vt_resonance = 0.25f;
+        n.vt_mix = 0.75f;
     } else if (!strcmp(id, "droid")) {
         n.hp_on = true;
         n.hp_freq = 300.0f;
