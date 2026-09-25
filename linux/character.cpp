@@ -237,6 +237,242 @@ float ShelfEq::process(float x) {
     return high_.process(low_.process(x));
 }
 
+/* ---- VocalTract ---- */
+
+namespace {
+
+const float kPreEmphasis = 0.95f;
+
+/* Levinson-Durbin. a[0..p] direct form (a[0] = 1), k[0..p-1] reflection
+   coefficients, *norm_err = prediction error / r[0] = prod(1 - k^2). */
+bool levinson(const double* r, int p, double* a, float* k, double* norm_err) {
+    double tmp[VocalTract::kOrder + 1];
+    a[0] = 1.0;
+    for (int i = 1; i <= p; i++) {
+        a[i] = 0.0;
+    }
+    double err = r[0];
+    if (!(err > 0.0)) {
+        return false;
+    }
+    for (int i = 1; i <= p; i++) {
+        double acc = r[i];
+        for (int j = 1; j < i; j++) {
+            acc += a[j] * r[i - j];
+        }
+        const double ki = -acc / err;
+        if (!(fabs(ki) < 0.9995)) {
+            return false;
+        }
+        for (int j = 1; j < i; j++) {
+            tmp[j] = a[j] + ki * a[i - j];
+        }
+        for (int j = 1; j < i; j++) {
+            a[j] = tmp[j];
+        }
+        a[i] = ki;
+        k[i - 1] = (float)ki;
+        err *= 1.0 - ki * ki;
+    }
+    *norm_err = err / r[0];
+    return true;
+}
+
+/* Direct form -> reflection coefficients; fails if the filter is unstable. */
+bool step_down(const double* a_in, int p, float* k, double* norm_err) {
+    double a[VocalTract::kOrder + 1];
+    double tmp[VocalTract::kOrder + 1];
+    for (int i = 0; i <= p; i++) {
+        a[i] = a_in[i];
+    }
+    double prod = 1.0;
+    for (int i = p; i >= 1; i--) {
+        const double ki = a[i];
+        if (!(fabs(ki) < 0.9995)) {
+            return false;
+        }
+        const double d = 1.0 - ki * ki;
+        for (int j = 1; j < i; j++) {
+            tmp[j] = (a[j] - ki * a[i - j]) / d;
+        }
+        for (int j = 1; j < i; j++) {
+            a[j] = tmp[j];
+        }
+        k[i - 1] = (float)ki;
+        prod *= d;
+    }
+    *norm_err = prod;
+    return true;
+}
+
+}  // namespace
+
+void VocalTract::init(float rate) {
+    hist_.assign(kFrame, 0.0f);
+    win_.resize(kFrame);
+    frame_.assign(kFrame, 0.0);
+    warped_.assign(kFrame, 0.0);
+    for (int n = 0; n < kFrame; n++) {
+        win_[n] = 0.5f - 0.5f * cosf(2.0f * (float)M_PI * (n + 0.5f) / kFrame);
+    }
+    /* Gaussian lag window (~30 Hz) keeps the estimated resonances well-behaved. */
+    for (int i = 0; i <= kOrder; i++) {
+        const double x = 2.0 * M_PI * 30.0 * i / rate;
+        lag_[i] = exp(-0.5 * x * x);
+    }
+    reset();
+}
+
+void VocalTract::set(float formant_scale, float resonance) {
+    lambda_ = (formant_scale - 1.0f) / (formant_scale + 1.0f);
+    log_gamma_ = resonance * 0.003f; /* +-1 -> about +-46 Hz bandwidth at 48 kHz */
+}
+
+void VocalTract::reset() {
+    std::fill(hist_.begin(), hist_.end(), 0.0f);
+    hw_ = 0;
+    hop_count_ = 0;
+    for (int i = 0; i < kOrder; i++) {
+        ka_[i] = ks_[i] = ab_[i] = sb_[i] = 0.0f;
+    }
+    pre_x1_ = de_y1_ = 0.0f;
+    gain_ = gain_target_ = 1.0f;
+}
+
+void VocalTract::update() {
+    for (int n = 0; n < kFrame; n++) {
+        frame_[n] = (double)hist_[(hw_ + (size_t)n) % kFrame] * win_[n];
+    }
+    double r[kOrder + 1];
+    for (int i = 0; i <= kOrder; i++) {
+        double acc = 0.0;
+        for (int n = i; n < kFrame; n++) {
+            acc += frame_[n] * frame_[n - i];
+        }
+        r[i] = acc * lag_[i];
+    }
+    if (r[0] < 1.0e-9) {
+        return; /* silence: keep the previous tract */
+    }
+    r[0] *= 1.0001; /* -40 dB noise floor for numerical safety */
+
+    double ac[kOrder + 1];
+    float kc[kOrder];
+    double err_c;
+    if (!levinson(r, kOrder, ac, kc, &err_c)) {
+        return;
+    }
+
+    double aw[kOrder + 1];
+    float kw[kOrder];
+    double err_w = err_c;
+    bool warped = false;
+    if (lambda_ != 0.0f) {
+        /* Warped autocorrelation: correlate the frame with itself passed
+           through a chain of first-order all-pass sections. */
+        double rw[kOrder + 1];
+        rw[0] = r[0];
+        const double lam = lambda_;
+        for (int n = 0; n < kFrame; n++) {
+            warped_[n] = frame_[n];
+        }
+        for (int i = 1; i <= kOrder; i++) {
+            double x1 = 0.0;
+            double y1 = 0.0;
+            double acc = 0.0;
+            for (int n = 0; n < kFrame; n++) {
+                const double x = warped_[n];
+                const double y = -lam * x + x1 + lam * y1;
+                x1 = x;
+                y1 = y;
+                warped_[n] = y;
+                acc += frame_[n] * y;
+            }
+            rw[i] = acc * lag_[i];
+        }
+        warped = levinson(rw, kOrder, aw, kw, &err_w);
+    }
+    if (!warped) {
+        for (int i = 0; i <= kOrder; i++) {
+            aw[i] = ac[i];
+        }
+        for (int i = 0; i < kOrder; i++) {
+            kw[i] = kc[i];
+        }
+        err_w = err_c;
+    }
+
+    float ks[kOrder];
+    double err_s = err_w;
+    for (int i = 0; i < kOrder; i++) {
+        ks[i] = kw[i];
+    }
+    if (log_gamma_ != 0.0f) {
+        /* Bandwidth change: a[j] * gamma^j moves every pole's radius. */
+        double lg = log_gamma_;
+        for (int attempt = 0; attempt < 4; attempt++, lg *= 0.5) {
+            double ag[kOrder + 1];
+            for (int j = 0; j <= kOrder; j++) {
+                ag[j] = aw[j] * exp(lg * j);
+            }
+            float kg[kOrder];
+            double err_g;
+            if (step_down(ag, kOrder, kg, &err_g)) {
+                for (int i = 0; i < kOrder; i++) {
+                    ks[i] = kg[i];
+                }
+                err_s = err_g;
+                break;
+            }
+        }
+    }
+
+    for (int i = 0; i < kOrder; i++) {
+        ka_[i] = kc[i];
+        ks_[i] = ks[i];
+    }
+    /* Excitation power is r0*err_c; the new all-pole filter has power gain
+       1/err_s, so this keeps the output level equal to the input level. */
+    float g = (float)sqrt(err_s / err_c);
+    gain_target_ = g < 0.1f ? 0.1f : (g > 4.0f ? 4.0f : g);
+}
+
+float VocalTract::analyze(float x) {
+    const float pe = x - kPreEmphasis * pre_x1_;
+    pre_x1_ = x;
+    hist_[hw_] = pe;
+    hw_ = (hw_ + 1 == (size_t)kFrame) ? 0 : hw_ + 1;
+    if (++hop_count_ >= kHop) {
+        hop_count_ = 0;
+        update();
+    }
+    float f = pe;
+    float b = pe;
+    for (int m = 0; m < kOrder; m++) {
+        const float bd = ab_[m];
+        ab_[m] = b;
+        const float fn = f + ka_[m] * bd;
+        b = bd + ka_[m] * f;
+        f = fn;
+    }
+    return f;
+}
+
+float VocalTract::synth(float e) {
+    gain_ += (gain_target_ - gain_) * 0.005f;
+    float f = e * gain_;
+    for (int m = kOrder - 1; m >= 0; m--) {
+        f -= ks_[m] * sb_[m];
+        if (m + 1 < kOrder) {
+            sb_[m + 1] = sb_[m] + ks_[m] * f;
+        }
+    }
+    sb_[0] = f;
+    const float y = f + kPreEmphasis * de_y1_;
+    de_y1_ = y;
+    return y;
+}
+
 void dsp_enable_flush_to_zero() {
 #if defined(__aarch64__)
     uint64_t fpcr;

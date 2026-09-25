@@ -202,6 +202,10 @@ setInterval(async () => {
 const FX = [
   {title: 'Pitch', on: 'pitch_on', knobs: [
     ['pitch_semitones', 'Semitones', -12, 12, 0.5]]},
+  {title: 'Vocal model (formants independent of pitch)', on: 'vt_on', knobs: [
+    ['vt_formant', 'Tract size', 0.7, 1.5, 0.01],
+    ['vt_resonance', 'Resonance', -1, 1, 0.05],
+    ['vt_mix', 'Mix', 0, 1, 0.05]]},
   {title: 'High-pass (cut bass)', on: 'hp_on', knobs: [
     ['hp_freq', 'Frequency Hz', 20, 2000, 10],
     ['hp_cascade', 'Steepness', 1, 4, 1]]},

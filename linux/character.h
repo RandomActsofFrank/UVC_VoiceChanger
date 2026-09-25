@@ -154,5 +154,56 @@ private:
     Biquad high_;
 };
 
+/*
+ * Vocal-tract model (LPC source/filter), used for pitch-independent formant
+ * treatment:
+ *   analyze(): pre-emphasis -> lattice inverse filter with the speaker's
+ *              current vocal-tract estimate -> excitation (buzz/noise)
+ *   (the excitation may be pitch-shifted in between)
+ *   synth():   lattice all-pole filter with a reshaped vocal tract ->
+ *              de-emphasis
+ * The tract is re-estimated every kHop samples from the last kFrame input
+ * samples, so the resonances follow the speaker's vowels. Reshaping:
+ *  - formant_scale: frequency-warped LPC (all-pass warping), moves every
+ *    formant up (>1, smaller head) or down (<1, larger head);
+ *  - resonance: narrows (>0, more resonant/hollow) or widens (<0) formant
+ *    bandwidths.
+ * With formant_scale 1, resonance 0 and no pitch shift in between,
+ * synth(analyze(x)) == x exactly.
+ */
+class VocalTract {
+public:
+    static const int kOrder = 24;
+    static const int kFrame = 1024;
+    static const int kHop = 128;
+
+    void init(float rate);
+    void set(float formant_scale, float resonance);
+    void reset();
+    float analyze(float x);
+    float synth(float e);
+
+private:
+    void update();
+
+    std::vector<float> hist_; /* pre-emphasised input, ring of kFrame */
+    std::vector<float> win_;
+    std::vector<double> frame_;
+    std::vector<double> warped_;
+    double lag_[kOrder + 1] = {};
+    size_t hw_ = 0;
+    int hop_count_ = 0;
+    float ka_[kOrder] = {}; /* analysis reflection coefficients */
+    float ks_[kOrder] = {}; /* synthesis reflection coefficients */
+    float ab_[kOrder] = {}; /* analysis lattice state */
+    float sb_[kOrder] = {}; /* synthesis lattice state */
+    float pre_x1_ = 0.0f;
+    float de_y1_ = 0.0f;
+    float lambda_ = 0.0f;
+    float log_gamma_ = 0.0f;
+    float gain_ = 1.0f;
+    float gain_target_ = 1.0f;
+};
+
 /* Flush denormals to zero on the calling thread (call from the audio thread). */
 void dsp_enable_flush_to_zero();

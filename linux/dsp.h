@@ -104,6 +104,12 @@ struct FxParams {
     bool lim_on;
     float lim_ceiling_db;
     float lim_release_ms;
+
+    /* Vocal-tract model: pitch-independent formant shift + resonance. */
+    bool vt_on;
+    float vt_formant;   /* formant scale: >1 smaller/brighter tract, <1 larger */
+    float vt_resonance; /* -1 softer .. +1 sharper, more resonant formants */
+    float vt_mix;       /* 0 = classic pitch path only, 1 = vocal model only */
 };
 
 /* A/B listening mode (not saved in presets). */
@@ -139,7 +145,11 @@ void fx_clamp(FxParams* p);
  *   -> HP x n -> LP x n -> presence peak          (classic)
  *   -> ring mod                                   (classic)
  *   -> comb / cavity (feedback damping optional)  (classic, improved)
- *   -> volume -> pitch shift                      (classic)
+ *   -> volume
+ *   -> pitch shift                                (classic)
+ *      [vt_on] in parallel: vocal-tract analysis -> pitch shift of the
+ *      excitation only -> resynthesis with the reshaped tract; blended
+ *      with the classic pitch path by vt_mix
  *   -> [character_on]
  *        vocal character -> compressor -> split:
  *          dry ------------------------------------------+
@@ -179,11 +189,17 @@ private:
     };
     static const int kMaxFilters = 9; /* 4 HP + 4 LP + peak */
 
+    struct PitchState {
+        std::vector<float> buf;
+        unsigned int w = 0;
+        float phase = 0.0f;
+    };
+
     struct Channel {
         std::vector<Biquad> filters;
-        std::vector<float> pitch_buf;
-        unsigned int pitch_w = 0;
-        float pitch_phase = 0.0f;
+        PitchState pitch;
+        PitchState vt_pitch; /* same settings as pitch, so both stay in step */
+        VocalTract vt;
         CombDelay comb;
         VocalCharacter vocal;
         Compressor comp;
@@ -196,7 +212,7 @@ private:
 
     void apply(const FxParams& p);
     void reset_voice_state();
-    float pitch_sample(Channel& c, float x);
+    float pitch_sample(PitchState& s, float x);
     float character_sample(Channel& c, float x, float am_sine);
 
     unsigned int rate_;

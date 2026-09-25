@@ -96,6 +96,10 @@ const FxField kFields[] = {
     FX_FIELD(kFxBool, lim_on),
     FX_FIELD(kFxFloat, lim_ceiling_db),
     FX_FIELD(kFxFloat, lim_release_ms),
+    FX_FIELD(kFxBool, vt_on),
+    FX_FIELD(kFxFloat, vt_formant),
+    FX_FIELD(kFxFloat, vt_resonance),
+    FX_FIELD(kFxFloat, vt_mix),
 };
 
 /* To add a character voice (e.g. Chopper): add a row here with voice = true
@@ -103,6 +107,7 @@ const FxField kFields[] = {
 const FxPresetInfo kPresets[] = {
     {"clean", "Clean / Bypass", true},
     {"r3x", "DJ R3X", true},
+    {"r3x-vocal", "DJ R3X (vocal model)", true},
     {"tie", "TIE Pilot", true},
     {"trooper", "Stormtrooper", true},
     {"droid-voice", "Droid", true},
@@ -198,6 +203,9 @@ void set_defaults(FxParams* p) {
     p->feq_high_db = 0.0f;
     p->lim_ceiling_db = -1.0f;
     p->lim_release_ms = 60.0f;
+    p->vt_formant = 1.0f;
+    p->vt_resonance = 0.0f;
+    p->vt_mix = 1.0f;
 }
 
 }  // namespace
@@ -241,6 +249,36 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.comb_mix = 0.3f;
         n.clip_on = true;
         n.clip_factor = 4;
+    } else if (!strcmp(id, "r3x-vocal")) {
+        /* R3X from a different vocal system: a smaller, brighter, more
+           resonant tract (formants moved independently of pitch), a nasal
+           resonance and forward presence. No ring mod, comb or clipping. */
+        n.pitch_on = true;
+        n.pitch_semitones = 1.0f;
+        n.vt_on = true;
+        n.vt_formant = 1.15f;
+        n.vt_resonance = 0.4f;
+        n.vt_mix = 0.9f;
+        n.hp_on = true;
+        n.hp_freq = 200.0f;
+        n.hp_cascade = 2;
+        n.lp_on = true;
+        n.lp_freq = 7500.0f;
+        n.peak_on = true;
+        n.peak_freq = 2800.0f;
+        n.peak_q = 1.2f;
+        n.peak_gain_db = 4.0f;
+        n.character_on = true;
+        n.vc_on = true;
+        n.formant_db = 0.0f;
+        n.nasal_db = 5.0f;
+        n.tilt_db = 2.0f;
+        n.comp_on = true;
+        n.comp_threshold_db = -26.0f;
+        n.comp_ratio = 3.0f;
+        n.comp_makeup_db = 6.0f;
+        n.char_mix = 0.0f;
+        n.lim_on = true;
     } else if (!strcmp(id, "droid")) {
         n.hp_on = true;
         n.hp_freq = 300.0f;
@@ -546,13 +584,18 @@ void fx_clamp(FxParams* p) {
     p->feq_high_db = clampf(p->feq_high_db, -12.0f, 12.0f);
     p->lim_ceiling_db = clampf(p->lim_ceiling_db, -12.0f, 0.0f);
     p->lim_release_ms = clampf(p->lim_release_ms, 5.0f, 1000.0f);
+    p->vt_formant = clampf(p->vt_formant, 0.7f, 1.5f);
+    p->vt_resonance = clampf(p->vt_resonance, -1.0f, 1.0f);
+    p->vt_mix = clampf(p->vt_mix, 0.0f, 1.0f);
 }
 
 VoiceChain::VoiceChain(unsigned int rate, unsigned int channels)
     : rate_(rate), channels_(channels), ch_(channels) {
     for (Channel& c : ch_) {
         c.filters.reserve(kMaxFilters);
-        c.pitch_buf.assign(kPitchBufLen, 0.0f);
+        c.pitch.buf.assign(kPitchBufLen, 0.0f);
+        c.vt_pitch.buf.assign(kPitchBufLen, 0.0f);
+        c.vt.init((float)rate);
         c.comb.init((size_t)(kCombMaxSec * rate) + 1);
         c.helmet.init((size_t)(kHelmetReflectMaxSec * rate) + 1);
     }
@@ -570,6 +613,7 @@ void VoiceChain::configure(const FxParams& in, int mode) {
         e.character_on = false;
         e.lim_on = false;
         e.comb_damp = 0.0f;
+        e.vt_on = false;
     }
     const bool voice_change =
         mode != mode_ || (strcmp(e.preset, p_.preset) != 0 && strcmp(e.preset, "custom") != 0);
@@ -639,6 +683,7 @@ void VoiceChain::apply(const FxParams& in) {
                      p_.helmet_reflect_mix, p_.helmet_am_depth, sr);
         c.feq.set(p_.feq_low_hz, p_.feq_low_db, p_.feq_high_hz, p_.feq_high_db, sr);
         c.lim.set(p_.lim_ceiling_db, p_.lim_release_ms, sr);
+        c.vt.set(p_.vt_formant, p_.vt_resonance);
     }
 
     volume_ = powf(10.0f, p_.volume_db / 20.0f);
@@ -655,27 +700,28 @@ void VoiceChain::reset_voice_state() {
     for (Channel& c : ch_) {
         c.comb.reset();
         c.helmet.reset();
+        c.vt.reset();
     }
 }
 
 /* Two crossfaded taps sweeping a short delay line (low-latency pitch shift). */
-float VoiceChain::pitch_sample(Channel& c, float x) {
+float VoiceChain::pitch_sample(PitchState& c, float x) {
     const unsigned int mask = kPitchBufLen - 1;
     const float window = kPitchWindowSec * (float)rate_;
-    c.pitch_buf[c.pitch_w] = x;
+    c.buf[c.w] = x;
 
     auto tap = [&](float delay) {
-        float pos = (float)c.pitch_w - delay;
+        float pos = (float)c.w - delay;
         if (pos < 0.0f) {
             pos += (float)kPitchBufLen;
         }
         const unsigned int i0 = (unsigned int)pos & mask;
         const unsigned int i1 = (i0 + 1) & mask;
         const float frac = pos - floorf(pos);
-        return c.pitch_buf[i0] + (c.pitch_buf[i1] - c.pitch_buf[i0]) * frac;
+        return c.buf[i0] + (c.buf[i1] - c.buf[i0]) * frac;
     };
 
-    const float ph1 = c.pitch_phase;
+    const float ph1 = c.phase;
     float ph2 = ph1 + 0.5f;
     if (ph2 >= 1.0f) {
         ph2 -= 1.0f;
@@ -684,9 +730,9 @@ float VoiceChain::pitch_sample(Channel& c, float x) {
     const float g1 = s * s;
     const float y = tap(ph1 * window) * g1 + tap(ph2 * window) * (1.0f - g1);
 
-    c.pitch_w = (c.pitch_w + 1) & mask;
-    c.pitch_phase += pitch_step_;
-    c.pitch_phase -= floorf(c.pitch_phase);
+    c.w = (c.w + 1) & mask;
+    c.phase += pitch_step_;
+    c.phase -= floorf(c.phase);
     return y;
 }
 
@@ -757,8 +803,19 @@ void VoiceChain::process(int16_t* interleaved, unsigned int frames) {
                     x = c.comb.process(x);
                 }
                 x *= volume_;
-                if (p_.pitch_on) {
-                    x = pitch_sample(c, x);
+                if (p_.vt_on) {
+                    /* Pitch moves only the excitation; formants come from the
+                       (reshaped) vocal tract, so pitch and formants are independent. */
+                    float e = c.vt.analyze(x);
+                    if (p_.pitch_on) {
+                        c.vt_pitch.phase = c.pitch.phase;
+                        e = pitch_sample(c.vt_pitch, e);
+                    }
+                    const float voiced = c.vt.synth(e);
+                    const float classic = p_.pitch_on ? pitch_sample(c.pitch, x) : x;
+                    x = classic + (voiced - classic) * p_.vt_mix;
+                } else if (p_.pitch_on) {
+                    x = pitch_sample(c.pitch, x);
                 }
                 if (character) {
                     x = character_sample(c, x, am);

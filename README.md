@@ -38,7 +38,7 @@ USB playback (speakers / headphones / amp)
 
 ### Voices
 
-The top of the page is the voice picker: tap **Clean / Bypass**, **DJ R3X**, **TIE Pilot**, **Stormtrooper** or **Droid** and the whole character loads at once. The active voice is shown in the box above the buttons. No tuning is needed. Switching while audio is running crossfades over about 10 ms (one audio period out, one in), clears the old voice's echo tail, and doesn't restart the audio engine.
+The top of the page is the voice picker: tap **Clean / Bypass**, **DJ R3X**, **DJ R3X (vocal model)**, **TIE Pilot**, **Stormtrooper** or **Droid** and the whole character loads at once. The active voice is shown in the box above the buttons. No tuning is needed. Switching while audio is running crossfades over about 10 ms (one audio period out, one in), clears the old voice's echo tail, and doesn't restart the audio engine.
 
 **More voices** has the extras: Dark Mechanical, Quirky Droid, the original (classic) Stormtrooper / TIE Pilot / Droid, Radio and Villain. Presets you save yourself show up as voice buttons too.
 
@@ -55,7 +55,10 @@ input gain
 → high-pass ×n → low-pass ×n → presence peak        (classic)
 → ring modulator                                    (classic)
 → metal / cavity comb (optional feedback damping)   (classic, improved)
-→ volume → pitch shift                              (classic)
+→ volume
+→ pitch shift                                       (classic)
+  [vocal model] in parallel: vocal-tract analysis → pitch shift of the
+  excitation only → resynthesis with a reshaped tract, blended by Mix
 → [character stages]
     vocal character → compressor → split:
       dry ──────────────────────────────────────┐
@@ -68,7 +71,8 @@ input gain
 
 | Stage | What it does |
 |-------|--------------|
-| Pitch | Shifts up/down in semitones (low-latency delay-line shifter; big shifts sound slightly warbly) |
+| Pitch | Shifts up/down in semitones (low-latency delay-line shifter; big shifts sound slightly warbly). On its own it moves the formants too, which is what makes a shifted voice sound "sped up" |
+| Vocal model | Tracks your vocal tract (LPC, updated every 2.7 ms), pitch-shifts only the buzz underneath, and rebuilds the voice through a reshaped tract. **Tract size** moves all your formants independently of pitch (>1 smaller/brighter head, <1 bigger); **Resonance** makes them sharper/hollower or softer; **Mix** blends with the classic pitch path. Resonances follow your vowels because they come from your own speech |
 | High-pass / Low-pass | Cut bass / treble; "Steepness" cascades filters like the ESP |
 | Presence peak | Boost or cut a frequency band (nasal / tinny character) |
 | Ring modulator | Robot / Dalek buzz; "Mix" blends it with the dry voice |
