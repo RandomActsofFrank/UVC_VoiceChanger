@@ -315,9 +315,11 @@ void VocalTract::init(float rate) {
     for (int n = 0; n < kFrame; n++) {
         win_[n] = 0.5f - 0.5f * cosf(2.0f * (float)M_PI * (n + 0.5f) / kFrame);
     }
-    /* Gaussian lag window (~30 Hz) keeps the estimated resonances well-behaved. */
+    /* Gaussian lag window (60 Hz): on high-pitched voices the tract estimate
+       otherwise locks onto individual harmonics as needle-thin resonances,
+       which ring and pop when a harmonic sits on them. */
     for (int i = 0; i <= kOrder; i++) {
-        const double x = 2.0 * M_PI * 30.0 * i / rate;
+        const double x = 2.0 * M_PI * 60.0 * i / rate;
         lag_[i] = exp(-0.5 * x * x);
     }
     reset();
@@ -434,7 +436,9 @@ void VocalTract::update() {
     /* Excitation power is r0*err_c; the new all-pole filter has power gain
        1/err_s, so this keeps the output level equal to the input level. */
     float g = (float)sqrt(err_s / err_c);
-    gain_target_ = g < 0.1f ? 0.1f : (g > 4.0f ? 4.0f : g);
+    /* Capped at +6 dB: very predictable (high-pitched, harmonic-locked)
+       frames make err_c tiny and would otherwise jump the level. */
+    gain_target_ = g < 0.1f ? 0.1f : (g > 2.0f ? 2.0f : g);
 }
 
 float VocalTract::analyze(float x) {
