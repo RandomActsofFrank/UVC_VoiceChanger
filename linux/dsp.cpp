@@ -13,7 +13,7 @@
 namespace {
 
 const unsigned int kPitchBufLen = 4096; /* power of two */
-const float kPitchWindowSec = 0.030f;
+const float kPitchWindowSec = 0.020f;
 const float kCombMaxSec = 0.300f;
 
 #define FX_FIELD(kind, name) {#name, kind, offsetof(FxParams, name)}
@@ -48,6 +48,8 @@ const FxPresetInfo kPresets[] = {
     {"clean", "Clean (no effects)"},
     {"r3x", "DJ R3X"},
     {"droid", "Droid (ring mod)"},
+    {"stormtrooper", "Stormtrooper"},
+    {"tiepilot", "TIE Pilot"},
     {"radio", "Radio"},
     {"villain", "Villain (deep)"},
 };
@@ -109,28 +111,29 @@ bool fx_apply_preset(const char* id, FxParams* p) {
     if (!strcmp(id, "clean")) {
         /* defaults: every effect off */
     } else if (!strcmp(id, "r3x")) {
-        /* Bright, nasal, slightly sped-up cantina droid with a tin-can resonance. */
+        /* Bright, nasal cantina droid through a small speaker, with a metallic edge. */
+        n.volume_db = 3.0f;
         n.pitch_on = true;
-        n.pitch_semitones = 3.0f;
+        n.pitch_semitones = 1.0f;
         n.hp_on = true;
-        n.hp_freq = 300.0f;
+        n.hp_freq = 350.0f;
         n.hp_cascade = 2;
         n.lp_on = true;
-        n.lp_freq = 6500.0f;
+        n.lp_freq = 5000.0f;
         n.lp_cascade = 2;
         n.peak_on = true;
-        n.peak_freq = 1800.0f;
-        n.peak_q = 1.2f;
-        n.peak_gain_db = 8.0f;
+        n.peak_freq = 2500.0f;
+        n.peak_q = 1.0f;
+        n.peak_gain_db = 9.0f;
         n.ring_on = true;
-        n.ring_freq = 90.0f;
-        n.ring_mix = 0.2f;
+        n.ring_freq = 160.0f;
+        n.ring_mix = 0.3f;
         n.comb_on = true;
-        n.comb_ms = 4.0f;
-        n.comb_feedback = 0.45f;
-        n.comb_mix = 0.5f;
+        n.comb_ms = 3.0f;
+        n.comb_feedback = 0.25f;
+        n.comb_mix = 0.35f;
         n.clip_on = true;
-        n.clip_factor = 3;
+        n.clip_factor = 4;
     } else if (!strcmp(id, "droid")) {
         n.hp_on = true;
         n.hp_freq = 300.0f;
@@ -141,6 +144,49 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.ring_mix = 1.0f;
         n.clip_on = true;
         n.clip_factor = 4;
+    } else if (!strcmp(id, "stormtrooper")) {
+        /* Helmet mic into a radio: boxy, band-limited, gritty. */
+        n.volume_db = 4.0f;
+        n.hp_on = true;
+        n.hp_freq = 400.0f;
+        n.hp_cascade = 3;
+        n.lp_on = true;
+        n.lp_freq = 3200.0f;
+        n.lp_cascade = 3;
+        n.peak_on = true;
+        n.peak_freq = 1200.0f;
+        n.peak_q = 1.5f;
+        n.peak_gain_db = 6.0f;
+        n.comb_on = true;
+        n.comb_ms = 1.5f;
+        n.comb_feedback = 0.3f;
+        n.comb_mix = 0.3f;
+        n.clip_on = true;
+        n.clip_factor = 6;
+    } else if (!strcmp(id, "tiepilot")) {
+        /* Sealed flight mask over cockpit comms: narrower, lower, more distorted. */
+        n.volume_db = 5.0f;
+        n.pitch_on = true;
+        n.pitch_semitones = -1.0f;
+        n.hp_on = true;
+        n.hp_freq = 500.0f;
+        n.hp_cascade = 3;
+        n.lp_on = true;
+        n.lp_freq = 2500.0f;
+        n.lp_cascade = 3;
+        n.peak_on = true;
+        n.peak_freq = 900.0f;
+        n.peak_q = 2.0f;
+        n.peak_gain_db = 8.0f;
+        n.ring_on = true;
+        n.ring_freq = 50.0f;
+        n.ring_mix = 0.1f;
+        n.comb_on = true;
+        n.comb_ms = 2.5f;
+        n.comb_feedback = 0.35f;
+        n.comb_mix = 0.3f;
+        n.clip_on = true;
+        n.clip_factor = 7;
     } else if (!strcmp(id, "radio")) {
         n.hp_on = true;
         n.hp_freq = 400.0f;

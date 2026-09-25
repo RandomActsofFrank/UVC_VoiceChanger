@@ -50,7 +50,7 @@ filters → ring modulator → metal/echo → volume → pitch → clipping.
 | Metal / echo | Short delay = metallic tin-can resonance; long delay = echo |
 | Clipping | Soft distortion / grit |
 
-Presets: **Clean**, **DJ R3X**, **Droid**, **Radio**, **Villain**. Picking a preset loads its settings; moving any slider switches to **Custom**. Changes apply immediately, even while audio is running.
+Presets: **Clean**, **DJ R3X**, **Droid**, **Stormtrooper**, **TIE Pilot**, **Radio**, **Villain**. Picking a preset loads its settings; moving any slider switches to **Custom**. Changes apply immediately, even while audio is running.
 
 Settings are not saved yet — restarting `uvc_pass` goes back to the startup preset (`--preset r3x` to start as DJ R3X).
 
