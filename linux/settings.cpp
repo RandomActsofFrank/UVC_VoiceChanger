@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
@@ -63,9 +64,26 @@ bool AppSettings::load(const std::string& path) {
             output = value;
         } else if (key == "startup_preset") {
             startup_preset = value;
+        } else if (key == "ptt_enabled") {
+            ptt.enabled = value == "1" || value == "true";
+        } else if (key == "ptt_chip") {
+            ptt.chip = value;
+        } else if (key == "ptt_gpio") {
+            ptt.gpio = atoi(value.c_str());
+        } else if (key == "ptt_on_us") {
+            ptt.on_us = atoi(value.c_str());
+        } else if (key == "ptt_off_us") {
+            ptt.off_us = atoi(value.c_str());
+        } else if (key == "ptt_timeout_ms") {
+            ptt.timeout_ms = atoi(value.c_str());
+        } else if (key == "ptt_min_us") {
+            ptt.min_us = atoi(value.c_str());
+        } else if (key == "ptt_max_us") {
+            ptt.max_us = atoi(value.c_str());
         }
     }
     fclose(f);
+    ptt_clamp(&ptt);
     return true;
 }
 
@@ -87,11 +105,27 @@ bool AppSettings::save(const std::string& path, std::string* err) const {
             "autostart=%d\n"
             "input=%s\n"
             "output=%s\n"
-            "startup_preset=%s\n",
+            "startup_preset=%s\n"
+            "ptt_enabled=%d\n"
+            "ptt_chip=%s\n"
+            "ptt_gpio=%d\n"
+            "ptt_on_us=%d\n"
+            "ptt_off_us=%d\n"
+            "ptt_timeout_ms=%d\n"
+            "ptt_min_us=%d\n"
+            "ptt_max_us=%d\n",
             autostart ? 1 : 0,
             one_line(input).c_str(),
             one_line(output).c_str(),
-            one_line(startup_preset).c_str());
+            one_line(startup_preset).c_str(),
+            ptt.enabled ? 1 : 0,
+            one_line(ptt.chip).c_str(),
+            ptt.gpio,
+            ptt.on_us,
+            ptt.off_us,
+            ptt.timeout_ms,
+            ptt.min_us,
+            ptt.max_us);
     const bool ok = fflush(f) == 0 && fclose(f) == 0;
     if (!ok || rename(tmp.c_str(), path.c_str()) < 0) {
         *err = "Cannot save " + path + ": " + strerror(errno);

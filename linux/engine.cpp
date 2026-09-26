@@ -159,6 +159,8 @@ void PassEngine::loop() {
     dsp_enable_flush_to_zero();
     VoiceChain chain(alsa_rate(io), channels);
     chain.set_input_gain(cfg.mic_gain * cfg.amp_gain);
+    OutputGate gate;
+    gate.init(alsa_rate(io), 10.0f);
     unsigned int fx_seen = fx_version_.load() - 1;
 
     while (run_.load()) {
@@ -185,6 +187,12 @@ void PassEngine::loop() {
 
         /* Each channel processed separately; no channel remix. */
         chain.process(block, period);
+
+        /* Push-to-talk: processing above always runs; only what reaches
+           playback is gated. The PTT state is read (lock-free), never measured here. */
+        const PttMonitor* ptt = ptt_.load();
+        gate.process(block, period, channels, !ptt || ptt->output_allowed());
+        output_gain_.store(gate.gain());
 
         if (alsa_write(io, block, period) < 0) {
             std::lock_guard<std::mutex> lock(mu_);

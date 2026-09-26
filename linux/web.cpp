@@ -83,6 +83,16 @@ p.hint{color:#aaa;font-size:.85em}
 #tunemsg.err{color:#f66;border:0}
 .knob.sub{grid-template-columns:8.5em 1fr;color:#aaa}
 .knob.sub input{width:auto;justify-self:start}
+#ptt{margin-top:.5em;padding:.6em .8em;border-radius:6px;font-weight:700;font-size:1.1em;text-align:center}
+#ptt.ptt-ready{background:#333;color:#ddd}
+#ptt.ptt-talking{background:#2a5a2a;color:#fff}
+#ptt.ptt-lost{background:#6a1f1f;color:#fff}
+#pttdetail{margin-top:.4em;color:#aaa;font-size:.9em;white-space:pre-wrap;font-variant-numeric:tabular-nums}
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 .8em}
+.pgrid label{font-weight:normal;margin-top:.7em;font-size:.9em}
+.pgrid input{width:100%;box-sizing:border-box;font-size:1em;padding:.4em;margin-top:.2em;border-radius:6px}
+#pttmsg{margin-top:.4em;min-height:1em;color:#aaa;font-size:.9em}
+#pttmsg.err{color:#f66;border:0}
 </style>
 </head>
 <body>
@@ -90,6 +100,7 @@ p.hint{color:#aaa;font-size:.85em}
 <p class="sub">Stereo &middot; 48 kHz &middot; 16-bit &middot; 2 ch</p>
 
 <div id="active">Loading&hellip;</div>
+<div id="ptt" role="status" hidden></div>
 <div class="voices" id="voices"></div>
 <label for="more">More voices</label>
 <select id="more"></select>
@@ -127,6 +138,24 @@ p.hint{color:#aaa;font-size:.85em}
 <div id="status" class="idle">Loading&hellip;</div>
 <label class="opt"><input type="checkbox" id="autostart">Start audio automatically (at boot, and after the USB audio reconnects)</label>
 <label class="adv"><input type="checkbox" id="all">Show all ALSA device names (troubleshooting)</label>
+
+<h2>Push-to-talk</h2>
+<label class="opt"><input type="checkbox" id="ptt_enabled">Enable push-to-talk (RC transmitter button; speakers muted unless held)</label>
+<div id="pttdetail"></div>
+<details id="pttcfg">
+<summary>PTT settings</summary>
+<p class="hint">The receiver signal must be 3.3&nbsp;V logic: Pi GPIO pins are not 5&nbsp;V tolerant (see README). Hold and release the button and watch the PWM reading above to pick thresholds. Pulses at or over ON unmute, at or under OFF mute; in between keeps the current state. Set ON below OFF if the button shortens the pulse.</p>
+<div class="pgrid">
+<label>GPIO (BCM number)<input type="number" id="ptt_gpio" min="0" max="53" step="1"></label>
+<label>Signal timeout (ms)<input type="number" id="ptt_timeout_ms" min="20" max="2000" step="10"></label>
+<label>ON threshold (&micro;s)<input type="number" id="ptt_on_us" min="100" max="5000" step="10"></label>
+<label>OFF threshold (&micro;s)<input type="number" id="ptt_off_us" min="100" max="5000" step="10"></label>
+<label>Valid pulse min (&micro;s)<input type="number" id="ptt_min_us" min="100" max="5000" step="10"></label>
+<label>Valid pulse max (&micro;s)<input type="number" id="ptt_max_us" min="100" max="5000" step="10"></label>
+</div>
+<div class="row"><button id="pttsave">Save PTT settings</button></div>
+</details>
+<div id="pttmsg"></div>
 
 <details id="advanced">
 <summary>Advanced: DSP tuning (not needed for normal use)</summary>
@@ -170,7 +199,30 @@ function fill(sel, items, want) {
   if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
 }
 
+const PTT_TEXT = {ready: 'PTT: READY', talking: 'PTT: TALKING', lost: 'PTT: SIGNAL LOST'};
+
+function renderPtt(p) {
+  if (!p) return;
+  const pill = $('ptt');
+  pill.hidden = p.state === 'disabled';
+  pill.textContent = PTT_TEXT[p.state] || '';
+  pill.className = 'ptt-' + p.state;
+  if (p.state === 'disabled') {
+    $('pttdetail').textContent = 'Off: the speakers are always on.';
+    return;
+  }
+  const audio = !p.running ? 'STOPPED' : p.gain <= 0 ? 'MUTED' : p.gain >= 1 ? 'ACTIVE' : 'FADING';
+  $('pttdetail').textContent =
+    'PTT ' + (p.state === 'talking' ? 'ON' : 'OFF') +
+    ' \u00b7 PWM ' + (p.pulse_us ? p.pulse_us + ' \u00b5s' : '\u2014') +
+    ' \u00b7 Signal ' + (p.state === 'lost' ? 'LOST' : 'VALID') +
+    ' \u00b7 Audio ' + audio +
+    (p.chip ? '\nGPIO' + p.gpio + ' on ' + p.chip : '') +
+    (p.error ? '\n' + p.error : '');
+}
+
 function render(s) {
+  renderPtt(s.ptt);
   for (const id of ['input', 'output', 'refresh', 'start']) $(id).disabled = s.running;
   $('stop').disabled = !s.running;
   if (s.running) {
@@ -224,7 +276,7 @@ setInterval(async () => {
   } catch (e) {
     show('Lost connection to the Pi', 'err');
   }
-}, 1000);
+}, 500);
 
 const FX = [
   {title: 'Pitch', on: 'pitch_on', knobs: [
@@ -637,11 +689,30 @@ function updateStartup() {
   $('startupmsg').textContent = 'Loads at startup: ' + settings.startup_name;
 }
 
+const PTT_KEYS = ['gpio', 'timeout_ms', 'on_us', 'off_us', 'min_us', 'max_us'];
+
 function showSettings(s) {
   settings = s;
   $('autostart').checked = s.autostart;
   updateStartup();
+  if (s.ptt && !s.error) {
+    $('ptt_enabled').checked = s.ptt.enabled;
+    for (const k of PTT_KEYS) $('ptt_' + k).value = s.ptt[k];
+  }
 }
+
+async function savePtt() {
+  const body = 'ptt_enabled=' + ($('ptt_enabled').checked ? 1 : 0) +
+    PTT_KEYS.map(k => '&ptt_' + k + '=' + encodeURIComponent($('ptt_' + k).value)).join('');
+  const s = await postSettings(body);
+  $('pttmsg').textContent = s.error ||
+    (s.ptt.enabled ? 'Saved. Speakers stay muted until the PTT button is held.' : 'Saved. PTT off: speakers always on.');
+  $('pttmsg').className = s.error ? 'err' : '';
+  if (s.error) $('ptt_enabled').checked = settings.ptt ? settings.ptt.enabled : false;
+}
+
+$('ptt_enabled').onchange = savePtt;
+$('pttsave').onclick = savePtt;
 
 async function postSettings(body) {
   const s = await api('/api/settings', {
@@ -1005,14 +1076,16 @@ void send_response(int fd, int code, const char* reason, const char* type, const
 
 class WebServer {
 public:
-    explicit WebServer(const EngineConfig& defaults)
+    WebServer(const EngineConfig& defaults, PttMonitor* ptt)
         : cfg_(defaults),
           store_(defaults.presets_path),
           tunes_(tunings_path_for(defaults.presets_path)),
-          settings_path_(settings_path_for(defaults.presets_path)) {
+          settings_path_(settings_path_for(defaults.presets_path)),
+          ptt_(ptt) {
         cfg_.rate = 48000;
         cfg_.channels = 2;
         settings_.load(settings_path_);
+        engine_.set_ptt(ptt_);
         if (!settings_.input.empty() && !settings_.output.empty()) {
             snprintf(cfg_.input_dev, sizeof(cfg_.input_dev), "%s", settings_.input.c_str());
             snprintf(cfg_.output_dev, sizeof(cfg_.output_dev), "%s", settings_.output.c_str());
@@ -1125,7 +1198,27 @@ private:
         return std::string("{\"running\":") + (engine_.running() ? "true" : "false") +
                ",\"input\":\"" + json_escape(cfg_.input_dev) + "\",\"output\":\"" +
                json_escape(cfg_.output_dev) + "\",\"status\":\"" + json_escape(engine_.status()) +
-               "\",\"error\":\"" + json_escape(error) + "\",\"periods\":" + periods + "}";
+               "\",\"error\":\"" + json_escape(error) + "\",\"periods\":" + periods +
+               ",\"ptt\":" + ptt_status_json() + "}";
+    }
+
+    std::string ptt_status_json() {
+        const PttConfig c = ptt_->config();
+        char nums[96];
+        snprintf(nums, sizeof(nums), "\"pulse_us\":%d,\"gpio\":%d,\"gain\":%.3f", ptt_->pulse_us(), c.gpio,
+                 engine_.running() ? engine_.output_gain() : 0.0f);
+        return std::string("{\"state\":\"") + ptt_state_name(ptt_->state()) + "\"," + nums +
+               ",\"running\":" + (engine_.running() ? "true" : "false") + ",\"chip\":\"" +
+               json_escape(ptt_->chip()) + "\",\"error\":\"" + json_escape(ptt_->error()) + "\"}";
+    }
+
+    static std::string ptt_settings_json(const PttConfig& c) {
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+                 "{\"enabled\":%s,\"gpio\":%d,\"on_us\":%d,\"off_us\":%d,\"timeout_ms\":%d,\"min_us\":%d,"
+                 "\"max_us\":%d}",
+                 c.enabled ? "true" : "false", c.gpio, c.on_us, c.off_us, c.timeout_ms, c.min_us, c.max_us);
+        return buf;
     }
 
     std::string fx_response(const std::string& error = "", const std::string& message = "") {
@@ -1344,8 +1437,33 @@ private:
         return std::string("{\"autostart\":") + (settings_.autostart ? "true" : "false") +
                ",\"input\":\"" + json_escape(settings_.input) + "\",\"output\":\"" +
                json_escape(settings_.output) + "\",\"startup_preset\":\"" + json_escape(startup) +
-               "\",\"startup_name\":\"" + json_escape(preset_name(startup)) + "\",\"error\":\"" +
-               json_escape(error) + "\"}";
+               "\",\"startup_name\":\"" + json_escape(preset_name(startup)) +
+               "\",\"ptt\":" + ptt_settings_json(settings_.ptt) + ",\"error\":\"" + json_escape(error) + "\"}";
+    }
+
+    /* Any ptt_* fields in the form; returns false if none were present. */
+    static bool ptt_from_form(const std::string& body, PttConfig* c) {
+        bool any = false;
+        std::string v;
+        if (form_find(body, "ptt_enabled", &v)) {
+            c->enabled = v == "1" || v == "true";
+            any = true;
+        }
+        const struct {
+            const char* key;
+            int* field;
+        } ints[] = {
+            {"ptt_gpio", &c->gpio},       {"ptt_on_us", &c->on_us},   {"ptt_off_us", &c->off_us},
+            {"ptt_timeout_ms", &c->timeout_ms}, {"ptt_min_us", &c->min_us}, {"ptt_max_us", &c->max_us},
+        };
+        for (const auto& f : ints) {
+            if (form_find(body, f.key, &v)) {
+                *f.field = atoi(v.c_str());
+                any = true;
+            }
+        }
+        ptt_clamp(c);
+        return any;
     }
 
     std::string update_settings(const std::string& body) {
@@ -1373,11 +1491,21 @@ private:
             }
             next.startup_preset = v;
         }
+        const bool ptt_changed = ptt_from_form(body, &next.ptt);
+        if (ptt_changed) {
+            const std::string bad = ptt_validate(next.ptt);
+            if (!bad.empty()) {
+                return settings_json(bad);
+            }
+        }
         std::string err;
         if (!next.save(settings_path_, &err)) {
             return settings_json(err);
         }
         settings_ = next;
+        if (ptt_changed) {
+            ptt_->start(settings_.ptt); /* muted until valid pulses say otherwise */
+        }
         if (!engine_.running() && !settings_.input.empty() && !settings_.output.empty()) {
             snprintf(cfg_.input_dev, sizeof(cfg_.input_dev), "%s", settings_.input.c_str());
             snprintf(cfg_.output_dev, sizeof(cfg_.output_dev), "%s", settings_.output.c_str());
@@ -1398,12 +1526,13 @@ private:
     bool user_stopped_ = false; /* Stop pressed: no autostart retries until Start */
     time_t next_try_ = 0;
     int retry_sec_ = 2;
+    PttMonitor* ptt_; /* owned by main(); outlives engine_ */
     PassEngine engine_;
 };
 
 }  // namespace
 
-int run_web(const EngineConfig* defaults, volatile sig_atomic_t* keep_running) {
+int run_web(const EngineConfig* defaults, volatile sig_atomic_t* keep_running, PttMonitor* ptt) {
     const int port = defaults->web_port;
     int lfd = socket(AF_INET, SOCK_STREAM, 0);
     if (lfd < 0) {
@@ -1445,7 +1574,7 @@ int run_web(const EngineConfig* defaults, volatile sig_atomic_t* keep_running) {
             port,
             defaults->presets_path);
 
-    WebServer server(*defaults);
+    WebServer server(*defaults, ptt);
     while (*keep_running) {
         server.tick();
         struct pollfd p = {lfd, POLLIN, 0};

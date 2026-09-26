@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ptt.h"
+
 #include <string>
 
 /* App settings persisted next to presets.ini (settings.ini, key=value). */
@@ -8,6 +10,7 @@ struct AppSettings {
     std::string input;          /* devices used for autostart */
     std::string output;
     std::string startup_preset; /* empty = clean */
+    PttConfig ptt;              /* push-to-talk (ptt_* keys) */
 
     bool load(const std::string& path);
     bool save(const std::string& path, std::string* err) const;

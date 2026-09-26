@@ -32,6 +32,12 @@ if [ ! -x "$DIR/uvc_pass" ]; then
     exit 1
 fi
 
+# gpio: push-to-talk reads the RC receiver through /dev/gpiochip*
+GROUPS_LINE="audio"
+if getent group gpio >/dev/null 2>&1; then
+    GROUPS_LINE="audio gpio"
+fi
+
 cat > "$UNIT" <<EOF
 [Unit]
 Description=UVC VoiceChanger (web config + audio)
@@ -40,7 +46,7 @@ Wants=network-online.target
 
 [Service]
 User=$RUN_USER
-SupplementaryGroups=audio
+SupplementaryGroups=$GROUPS_LINE
 WorkingDirectory=$DIR
 ExecStart=$DIR/uvc_pass
 Restart=on-failure

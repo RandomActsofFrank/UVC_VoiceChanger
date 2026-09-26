@@ -2,6 +2,7 @@
 
 #include "alsa_io.h"
 #include "dsp.h"
+#include "ptt.h"
 #include "tuning.h"
 
 #include <atomic>
@@ -31,6 +32,12 @@ public:
     void set_mode(int mode);
     int mode() const { return mode_.load(); }
 
+    /* Push-to-talk: gates only the final output (the DSP keeps running).
+       nullptr = no gate. The monitor must outlive the engine. */
+    void set_ptt(const PttMonitor* ptt) { ptt_.store(ptt); }
+    /* Output gate level, 0 (muted) .. 1 (open). */
+    float output_gain() const { return output_gain_.load(); }
+
     std::string status() const;
     std::string last_error() const;
     unsigned long long blocks() const;
@@ -53,4 +60,6 @@ private:
     TuneParams tune_{};
     std::atomic<unsigned int> fx_version_{0};
     std::atomic<int> mode_{kFxModeCharacter};
+    std::atomic<const PttMonitor*> ptt_{nullptr};
+    std::atomic<float> output_gain_{1.0f};
 };

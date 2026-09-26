@@ -26,6 +26,8 @@ USB capture (e.g. Play! 3 / DJI Mic 2)
         ↓
  voice effects, each channel separately (L→L, R→R)
         ↓
+ push-to-talk output gate (optional; RC receiver button)
+        ↓
       ALSA
         ↓
 USB playback (speakers / headphones / amp)
@@ -65,6 +67,55 @@ A voice defines the **character**; a **tuning** adapts that character to the per
 
 **Save to …** updates the selected tuning, **Save as new…** creates one (e.g. your name), **Undo changes** reloads it, **Delete tuning** removes it. Tunings never change the voice preset itself. They live in `~/.config/uvc-voicechanger/tunings.ini`. Tuning changes glide over ~20 ms, so moving sliders while talking doesn't click.
 
+### Push-to-talk (RC transmitter button)
+
+A button on an RC transmitter becomes the microphone's push-to-talk: the receiver's PWM channel goes to one Pi GPIO pin. While the button is held the processed voice plays through the speakers; when it's released the speakers are muted. The voice processing never stops (so there's no warm-up when you press), ALSA is never stopped or reopened, and mute/unmute is a 10 ms fade, so there are no clicks.
+
+**Fail-safe:** the speakers are on only while valid pulses keep arriving *and* they're in the ON range. No pulse for longer than the timeout (receiver unpowered or unplugged, wire broken, GPIO unavailable, monitor stalled), or a pulse outside the valid range, mutes immediately. When the signal comes back, it needs three good pulses in a row and stays muted unless the button is actually held.
+
+PTT works whether or not the web page is open, and in `--cli` mode. It's off by default; with it off, audio is exactly as before.
+
+**Settings** (Push-to-talk section of the page, stored in `settings.ini`):
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| Enable push-to-talk | off | Off = speakers always on |
+| GPIO | 17 (header pin 11) | BCM GPIO number of the receiver signal |
+| ON threshold | 1700 µs | Pulses at or over this unmute |
+| OFF threshold | 1300 µs | Pulses at or under this mute; between ON and OFF keeps the current state (hysteresis) |
+| Signal timeout | 100 ms | No valid pulse for this long = signal lost = muted (RC frames are ~20 ms) |
+| Valid pulse min / max | 700 / 2300 µs | Anything outside is treated as a bad signal = muted |
+
+Set ON *below* OFF if your button shortens the pulse instead of lengthening it. To pick thresholds, open **PTT settings**, watch the **PWM** reading while you hold and release the button, and put ON and OFF a bit inside those two readings. The status box under the voice shows **PTT: READY** (released), **PTT: TALKING** (held) or **PTT: SIGNAL LOST**. `ptt_chip=` in `settings.ini` overrides the GPIO chip (auto-detected on Pi Zero 2 W, 3, 4 and 5).
+
+GPIO access uses the kernel's GPIO character device (`/dev/gpiochip*`, edge events with kernel timestamps) — no extra packages. The pin gets the internal pull-down, so a disconnected wire reads as "no signal". The service runs with the `gpio` group; if the page shows a permission error, run `sudo usermod -aG gpio $USER`, reboot, and re-run `sudo sh install-service.sh`.
+
+**Wiring and electrical safety — read before connecting:**
+
+- **Raspberry Pi GPIO is 3.3 V only and NOT 5 V tolerant.** A 5 V signal on a GPIO pin can permanently damage the Pi.
+- Many 2.4 GHz receivers output 3.3 V signal pulses even when powered from 5 V, but **some output 5 V**. The signal level of your receiver is unknown until measured: check the signal pin with a multimeter/oscilloscope (a servo signal on a multimeter reads roughly 0.3–0.5 V DC average; a scope shows the actual pulse height) or check the receiver's documentation.
+- If the signal is 5 V, or you're not sure, put a level shifter or a resistor divider in between, e.g. **10 kΩ in series from the receiver signal to the GPIO pin and 20 kΩ from the GPIO pin to ground** (5 V → 3.3 V). Even with a 3.3 V receiver, a **1 kΩ series resistor** is cheap protection.
+- Connect **receiver ground to a Pi ground pin** (e.g. header pin 9 or 14). Without a common ground the Pi can't read the signal.
+- Power the receiver from its own BEC/battery or the Pi's 5 V pin (receivers draw roughly 30–100 mA) — **never** from the Pi's 3.3 V pin.
+- Default pin: **GPIO17 = header pin 11**, ground on pin 9. Avoid GPIO 2/3 (I²C, fixed pull-ups), 14/15 (serial console) and 18–21 (I²S audio HATs).
+
+**Receiver failsafe — important:** when the transmitter is switched off or out of range, many receivers keep sending pulses at a *failsafe* position, and some hold the *last* position. The Pi can't tell that apart from a real signal, so if the button was held, the speakers would stay on. Set the receiver's failsafe for the PTT channel to **"no pulses"** (preferred) or to the **released** position. Then test it: hold the button, switch the transmitter off, and check that it mutes.
+
+**Hardware test checklist** (run `make test` first for the logic tests — no hardware needed):
+
+1. PTT disabled: audio as before.
+2. PTT enabled, transmitter off: muted, **SIGNAL LOST** (or READY if the receiver sends failsafe pulses at the released position).
+3. Receiver on, button released: muted, **READY**, PWM near your released value.
+4. Button held: **TALKING**, voice fades in.
+5. Button released: fades out, **READY**.
+6. Hold while speaking: voice sounds normal.
+7. Rapid presses: no clicks or pops.
+8. Transmitter off while held: mutes within the timeout.
+9. Receiver unplugged: muted, **SIGNAL LOST**.
+10. Change voice while released: switches as normal (silently).
+11. Change voice while held: switches as normal (normal crossfade).
+12. While released, the page's **periods** counter keeps rising: the DSP is still running; only the output is muted.
+
 ### Advanced: DSP tuning
 
 The collapsed **Advanced** section holds every DSP control, preset save/restore, and an **A/B compare** switch: **Bypass** (dry), **Classic DSP** (the original chain only, all character stages off) and **Character DSP** (everything). The A/B setting is not saved.
@@ -89,6 +140,7 @@ input gain
 → output level
 → soft limiter (safety)
 → 16-bit out
+→ push-to-talk gate (both channels; only when PTT is enabled)
 ```
 
 | Stage | What it does |

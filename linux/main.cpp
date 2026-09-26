@@ -26,7 +26,7 @@ static void on_signal(int) {
     }
 }
 
-static int run_cli(EngineConfig& cfg) {
+static int run_cli(EngineConfig& cfg, PttMonitor* ptt) {
     cfg.rate = 48000;
     cfg.channels = 2;
 
@@ -52,6 +52,7 @@ static int run_cli(EngineConfig& cfg) {
         tune_defaults(&tune);
     }
     engine.set_voice(fx, tune);
+    engine.set_ptt(ptt);
     g_cli_engine = &engine;
     if (!engine.start(cfg)) {
         fprintf(stderr, "Start failed: %s\n", engine.last_error().c_str());
@@ -69,7 +70,8 @@ static int run_cli(EngineConfig& cfg) {
         clock_gettime(CLOCK_MONOTONIC, &now);
         double dt = (now.tv_sec - last_log.tv_sec) + (now.tv_nsec - last_log.tv_nsec) / 1e9;
         if (cfg.verbose && dt >= 1.0) {
-            fprintf(stderr, "running  periods=%llu\n", (unsigned long long)engine.blocks());
+            fprintf(stderr, "running  periods=%llu  ptt=%s  pwm=%dus\n", (unsigned long long)engine.blocks(),
+                    ptt_state_name(ptt->state()), ptt->pulse_us());
             last_log = now;
         }
         struct timespec sleep_ts = {0, 100000000L};
@@ -106,18 +108,27 @@ int main(int argc, char** argv) {
         fprintf(stderr, "Unknown preset: %s\n", cfg.preset);
         return 1;
     }
+    AppSettings settings;
+    settings.load(settings_path_for(cfg.presets_path));
     if (!cfg.preset[0]) {
-        AppSettings settings;
-        settings.load(settings_path_for(cfg.presets_path));
         const std::string saved = settings.startup_preset;
         const bool usable = !saved.empty() && PresetStore(cfg.presets_path).get(saved, &check);
         snprintf(cfg.preset, sizeof(cfg.preset), "%s", usable ? saved.c_str() : "clean");
     }
 
+    /* Push-to-talk runs on its own thread for the life of the process,
+       whether or not anyone has the web page open. */
+    PttMonitor ptt;
+    ptt.start(settings.ptt);
+    if (settings.ptt.enabled) {
+        fprintf(stderr, "Push-to-talk on: GPIO%d, ON >= %d us, OFF <= %d us, timeout %d ms (muted until pressed)\n",
+                settings.ptt.gpio, settings.ptt.on_us, settings.ptt.off_us, settings.ptt.timeout_ms);
+    }
+
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
     if (cfg.use_cli) {
-        return run_cli(cfg);
+        return run_cli(cfg, &ptt);
     }
-    return run_web(&cfg, &g_run);
+    return run_web(&cfg, &g_run, &ptt);
 }

@@ -4,3 +4,4 @@ __pycache__/
 .DS_Store
 linux/*.o
 linux/uvc_pass
+linux/ptt_test
