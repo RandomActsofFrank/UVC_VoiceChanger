@@ -247,15 +247,13 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.ring_on = true;
         n.ring_freq = 160.0f;
         n.ring_mix = 0.3f;
-        n.comb_on = true;
-        n.comb_ms = 2.0f;
-        n.comb_feedback = 0.0f;
-        n.comb_mix = 0.3f;
+        /* No comb: a delayed copy reads as echo once the speakers are a few
+           feet from the mic. The ring and the speaker filter carry the edge. */
         n.clip_on = true;
         n.clip_factor = 4;
     } else if (!strcmp(id, "r3x-vocal")) {
         /* The classic DJ R3X chain (speaker filter, presence, light ring mod,
-           short metallic comb, clipping) with the vocal model layered in:
+           clipping) with the vocal model layered in:
            a slightly smaller tract independent of pitch, plus a nasal peak. */
         fx_apply_preset("r3x", &n);
         n.vt_on = true;
@@ -420,13 +418,12 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.lp_on = true;
         n.lp_freq = 7000.0f;
         n.lp_cascade = 1;
-        /* Feedforward copy only. Feedback would put resonant peaks above
-           unity and the pitch shift would walk them into a howl. */
+        /* Short scramble, not a room. A longer copy turns into echo on a PA. */
         n.comb_on = true;
-        n.comb_ms = 14.0f;
+        n.comb_ms = 7.0f;
         n.comb_feedback = 0.0f;
-        n.comb_damp = 0.55f;
-        n.comb_mix = 0.35f;
+        n.comb_damp = 0.0f;
+        n.comb_mix = 0.22f;
         n.clip_on = true;
         n.clip_factor = 2;
         n.lim_on = true;
@@ -439,12 +436,8 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.hp_freq = 300.0f;
         n.hp_cascade = 2;
         n.lp_on = true;
-        n.lp_freq = 3200.0f;
+        n.lp_freq = 3400.0f;
         n.lp_cascade = 2;
-        n.comb_on = true;
-        n.comb_ms = 1.1f;
-        n.comb_feedback = 0.0f;
-        n.comb_mix = 0.12f;
         n.clip_on = true;
         n.clip_factor = 3;
         n.character_on = true;
@@ -471,15 +464,11 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.hp_freq = 420.0f;
         n.hp_cascade = 2;
         n.lp_on = true;
-        n.lp_freq = 2400.0f;
+        n.lp_freq = 2600.0f;
         n.lp_cascade = 2;
         n.ring_on = true;
         n.ring_freq = 55.0f;
         n.ring_mix = 0.06f;
-        n.comb_on = true;
-        n.comb_ms = 1.6f;
-        n.comb_feedback = 0.0f;
-        n.comb_mix = 0.1f;
         n.clip_on = true;
         n.clip_factor = 4;
         n.character_on = true;
