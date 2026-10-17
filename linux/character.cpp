@@ -114,7 +114,14 @@ float Compressor::process(float x) {
         const float t = over + kCompKneeDb * 0.5f;
         gr_db = slope_ * t * t / (2.0f * kCompKneeDb);
     }
-    return x * db_to_lin(gr_db + makeup_db_);
+    /* Makeup may restore compressed peaks up to unity, never past it.
+       A howl starts quiet; positive gain there is what turns a stable
+       bypass loop into feedback. */
+    float gain_db = gr_db + makeup_db_;
+    if (gain_db > 0.0f) {
+        gain_db = 0.0f;
+    }
+    return x * db_to_lin(gain_db);
 }
 
 /* ---- SoftLimiter ---- */

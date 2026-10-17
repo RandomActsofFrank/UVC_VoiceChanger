@@ -412,7 +412,6 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         /* Ben Burtt's Jawas: dialogue sped up on tape (pitch and formants
            move together) plus a short second copy so the chatter scrambles.
            No vocal model — that would hold the formants and undo the speed-up. */
-        n.volume_db = 2.0f;
         n.pitch_on = true;
         n.pitch_semitones = 7.0f;
         n.hp_on = true;
@@ -421,54 +420,51 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.lp_on = true;
         n.lp_freq = 7000.0f;
         n.lp_cascade = 1;
+        /* Feedforward copy only. Feedback would put resonant peaks above
+           unity and the pitch shift would walk them into a howl. */
         n.comb_on = true;
         n.comb_ms = 14.0f;
-        n.comb_feedback = 0.18f;
+        n.comb_feedback = 0.0f;
         n.comb_damp = 0.55f;
-        n.comb_mix = 0.4f;
+        n.comb_mix = 0.35f;
         n.clip_on = true;
         n.clip_factor = 2;
         n.lim_on = true;
     } else if (!strcmp(id, "trooper")) {
-        /* OT stormtrooper: voice through a small helmet speaker / walkie,
-           re-recorded. Narrow band, broad mid box, light grit, radio leveling.
-           One short slap only — feedback would ring like a room, which the
-           films do not have. */
-        n.pitch_on = true;
-        n.pitch_semitones = -0.5f;
+        /* OT stormtrooper: helmet radio by cutting bass and treble, not by
+           boosting mids. A +dB peak at 1 kHz is exactly where a speaker/mic
+           loop howls, and bypass (no boost) does not. No pitch shift, so the
+           loop phase stays put. Slap has no feedback, so it cannot ring. */
         n.hp_on = true;
         n.hp_freq = 300.0f;
         n.hp_cascade = 2;
         n.lp_on = true;
         n.lp_freq = 3200.0f;
         n.lp_cascade = 2;
-        n.peak_on = true;
-        n.peak_freq = 1400.0f;
-        n.peak_q = 1.1f;
-        n.peak_gain_db = 4.0f;
         n.comb_on = true;
         n.comb_ms = 1.1f;
         n.comb_feedback = 0.0f;
-        n.comb_mix = 0.22f;
+        n.comb_mix = 0.12f;
         n.clip_on = true;
-        n.clip_factor = 4;
+        n.clip_factor = 3;
         n.character_on = true;
         n.comp_on = true;
         n.comp_threshold_db = -22.0f;
         n.comp_ratio = 3.0f;
         n.comp_attack_ms = 4.0f;
         n.comp_release_ms = 90.0f;
-        n.comp_makeup_db = 3.0f;
-        n.char_mix = 0.45f;
+        n.comp_makeup_db = 0.0f;
+        n.char_mix = 0.4f;
         n.sat_on = true;
-        n.sat_drive_db = 7.0f;
-        n.sat_mix = 0.35f;
+        n.sat_drive_db = 6.0f;
+        n.sat_mix = 0.3f;
         n.lim_on = true;
     } else if (!strcmp(id, "tie")) {
-        /* TIE pilot comms: tighter and harsher than a stormtrooper. Higher
-           cut, lower top, a broad mask honk, a little more grit, and a faint
-           carrier (ring) instead of amplitude wobble. Still one short slap,
-           no repeating reflection. */
+        /* TIE pilot comms: narrower than a stormtrooper, a little lower, a
+           little more grit. Same rule: the band limit is done with cuts.
+           The old +5 dB peak at 950 Hz sat in the howl band and bypass
+           (flat) did not howl. Ring mix stays under the point where it
+           can exceed unity. */
         n.pitch_on = true;
         n.pitch_semitones = -1.5f;
         n.hp_on = true;
@@ -477,31 +473,27 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.lp_on = true;
         n.lp_freq = 2400.0f;
         n.lp_cascade = 2;
-        n.peak_on = true;
-        n.peak_freq = 950.0f;
-        n.peak_q = 1.3f;
-        n.peak_gain_db = 5.0f;
         n.ring_on = true;
         n.ring_freq = 55.0f;
-        n.ring_mix = 0.08f;
+        n.ring_mix = 0.06f;
         n.comb_on = true;
         n.comb_ms = 1.6f;
         n.comb_feedback = 0.0f;
-        n.comb_mix = 0.2f;
+        n.comb_mix = 0.1f;
         n.clip_on = true;
-        n.clip_factor = 5;
+        n.clip_factor = 4;
         n.character_on = true;
         n.comp_on = true;
         n.comp_threshold_db = -24.0f;
         n.comp_ratio = 4.0f;
         n.comp_attack_ms = 3.0f;
         n.comp_release_ms = 70.0f;
-        n.comp_makeup_db = 3.0f;
-        n.char_mix = 0.55f;
+        n.comp_makeup_db = 0.0f;
+        n.char_mix = 0.4f;
         n.sat_on = true;
-        n.sat_drive_db = 10.0f;
-        n.sat_bias = 0.08f;
-        n.sat_mix = 0.45f;
+        n.sat_drive_db = 8.0f;
+        n.sat_bias = 0.06f;
+        n.sat_mix = 0.35f;
         n.lim_on = true;
     } else if (!strcmp(id, "droid-voice")) {
         /* Metallic droid body: tuned resonances, ringing cavity, light ring mod. */

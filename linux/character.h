@@ -40,7 +40,9 @@ private:
     float lp_ = 0.0f;
 };
 
-/* Feed-forward peak compressor with soft knee, dB-domain gain computer. */
+/* Feed-forward peak compressor with soft knee, dB-domain gain computer.
+ * Gain is never above unity: makeup only offsets reduction, so quiet
+ * signals (and the start of acoustic feedback) are not boosted. */
 class Compressor {
 public:
     void set(float threshold_db, float ratio, float attack_ms, float release_ms, float makeup_db, float rate);
