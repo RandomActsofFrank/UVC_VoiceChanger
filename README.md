@@ -40,7 +40,7 @@ USB playback (speakers / headphones / amp)
 
 ### Voices
 
-The top of the page is the voice picker: tap **Clean / Bypass**, **DJ R3X**, **TIE Pilot**, **Stormtrooper** or **Droid** (R3X, TIE Pilot and Stormtrooper also come as a **(vocal model)** version) and the whole character loads at once. The active voice is shown in the box above the buttons. No tuning is needed. Switching while audio is running crossfades over about 10 ms (one audio period out, one in), clears the old voice's echo tail, and doesn't restart the audio engine.
+The top of the page is the voice picker: tap **Clean / Bypass**, **DJ R3X**, **TIE Pilot**, **Stormtrooper**, **Jawa** or **Droid** (R3X, TIE Pilot and Stormtrooper also come as a **(vocal model)** version) and the whole character loads at once. **Jawa** is sped-up chatter (pitch and formants move together, like tape) plus a short scramble delay. **TIE Pilot** and **Stormtrooper** are helmet-radio voices: band-limited, lightly gritty, one short slap and no repeating echo. TIE is narrower and harsher than the trooper. The active voice is shown in the box above the buttons. No tuning is needed. Switching while audio is running crossfades over about 10 ms (one audio period out, one in), clears the old voice's echo tail, and doesn't restart the audio engine.
 
 **More voices** has the extras: Dark Mechanical, Quirky Droid, the original (classic) Stormtrooper / TIE Pilot / Droid, Radio and Villain. Presets you save yourself show up as voice buttons too.
 
@@ -67,39 +67,44 @@ A voice defines the **character**; a **tuning** adapts that character to the per
 
 **Save to …** updates the selected tuning, **Save as new…** creates one (e.g. your name), **Undo changes** reloads it, **Delete tuning** removes it. Tunings never change the voice preset itself. They live in `~/.config/uvc-voicechanger/tunings.ini`. Tuning changes glide over ~20 ms, so moving sliders while talking doesn't click.
 
-### Push-to-talk (RC transmitter button)
+### Push-to-talk
 
-A button on an RC transmitter becomes the microphone's push-to-talk: the receiver's PWM channel goes to one Pi GPIO pin. While the button is held the processed voice plays through the speakers; when it's released the speakers are muted. The voice processing never stops (so there's no warm-up when you press), ALSA is never stopped or reopened, and mute/unmute is a 10 ms fade, so there are no clicks.
+Speakers stay muted until you hold a button. Voice processing never stops (no warm-up on press), ALSA is never stopped or reopened, and mute/unmute is a 10 ms fade. Pick one input under **Push-to-talk → Input**:
 
-**Fail-safe:** the speakers are on only while valid pulses keep arriving *and* they're in the ON range. No pulse for longer than the timeout (receiver unpowered or unplugged, wire broken, GPIO unavailable, monitor stalled), or a pulse outside the valid range, mutes immediately. When the signal comes back, it needs three good pulses in a row and stays muted unless the button is actually held.
+| Input | When to use |
+|-------|-------------|
+| **RC receiver PWM** | Transmitter stick/button → receiver signal wire on a GPIO |
+| **Physical button (GPIO)** | Momentary switch on the costume (good for TIE Pilot when RC PTT is awkward) |
 
-PTT works whether or not the web page is open, and in `--cli` mode. It's off by default; with it off, audio is exactly as before.
+**Fail-safe:** speakers are on only while PTT is enabled *and* the monitor is healthy *and* the input says "talk". Missing RC pulses, a disconnected button wire (reads released), an unavailable GPIO, or a stalled monitor all mute. Recovering the signal never unmutes by itself — the button must actually be held.
 
-**Settings** (Push-to-talk section of the page, stored in `settings.ini`):
+PTT works with or without the web page, and in `--cli` mode. Off by default; with it off, audio is unchanged.
+
+**Shared settings** (stored in `settings.ini`):
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
 | Enable push-to-talk | off | Off = speakers always on |
-| GPIO | 17 (header pin 11) | BCM GPIO number of the receiver signal |
-| ON threshold | 1700 µs | Pulses at or over this unmute |
-| OFF threshold | 1300 µs | Pulses at or under this mute; between ON and OFF keeps the current state (hysteresis) |
-| Signal timeout | 100 ms | No valid pulse for this long = signal lost = muted (RC frames are ~20 ms) |
-| Valid pulse min / max | 700 / 2300 µs | Anything outside is treated as a bad signal = muted |
+| Input | RC receiver PWM | `rc` or `button` |
+| GPIO | 17 (header pin 11) | BCM GPIO for the RC signal *or* the switch |
+| Signal timeout | 100 ms | No healthy update for this long = SIGNAL LOST = muted |
 
-Set ON *below* OFF if your button shortens the pulse instead of lengthening it. To pick thresholds, open **PTT settings**, watch the **PWM** reading while you hold and release the button, and put ON and OFF a bit inside those two readings. The status box under the voice shows **PTT: READY** (released), **PTT: TALKING** (held) or **PTT: SIGNAL LOST**. `ptt_chip=` in `settings.ini` overrides the GPIO chip (auto-detected on Pi Zero 2 W, 3, 4 and 5).
+**RC-only:** ON / OFF thresholds (default 1700 / 1300 µs, with hysteresis), valid pulse range 700–2300 µs. Watch the PWM reading while you hold/release to pick thresholds. Set ON *below* OFF if the channel shortens the pulse.
 
-GPIO access uses the kernel's GPIO character device (`/dev/gpiochip*`, edge events with kernel timestamps) — no extra packages. The pin gets the internal pull-down, so a disconnected wire reads as "no signal". The service runs with the `gpio` group; if the page shows a permission error, run `sudo usermod -aG gpio $USER`, reboot, and re-run `sudo sh install-service.sh`.
+**Button-only:** Debounce (default 25 ms). Default wiring is **active-high**: switch between the GPIO and **3.3 V**, Pi pull-down holds it released. Tick **Active-low** for a switch to **GND** (pull-up holds it released). Status shows Button PRESSED / RELEASED.
+
+The status box under the voice shows **PTT: READY**, **PTT: TALKING**, or **PTT: SIGNAL LOST**.
+
+GPIO uses `/dev/gpiochip*` (no extra packages). The service runs with the `gpio` group; on a permission error: `sudo usermod -aG gpio $USER`, reboot, and re-run `sudo sh install-service.sh`.
 
 **Wiring and electrical safety — read before connecting:**
 
 - **Raspberry Pi GPIO is 3.3 V only and NOT 5 V tolerant.** A 5 V signal on a GPIO pin can permanently damage the Pi.
-- Many 2.4 GHz receivers output 3.3 V signal pulses even when powered from 5 V, but **some output 5 V**. The signal level of your receiver is unknown until measured: check the signal pin with a multimeter/oscilloscope (a servo signal on a multimeter reads roughly 0.3–0.5 V DC average; a scope shows the actual pulse height) or check the receiver's documentation.
-- If the signal is 5 V, or you're not sure, put a level shifter or a resistor divider in between, e.g. **10 kΩ in series from the receiver signal to the GPIO pin and 20 kΩ from the GPIO pin to ground** (5 V → 3.3 V). Even with a 3.3 V receiver, a **1 kΩ series resistor** is cheap protection.
-- Connect **receiver ground to a Pi ground pin** (e.g. header pin 9 or 14). Without a common ground the Pi can't read the signal.
-- Power the receiver from its own BEC/battery or the Pi's 5 V pin (receivers draw roughly 30–100 mA) — **never** from the Pi's 3.3 V pin.
-- Default pin: **GPIO17 = header pin 11**, ground on pin 9. Avoid GPIO 2/3 (I²C, fixed pull-ups), 14/15 (serial console) and 18–21 (I²S audio HATs).
+- **RC:** many receivers are 3.3 V signal even on 5 V power, but **some are 5 V**. Measure first. If unsure, use a divider (e.g. 10 kΩ series + 20 kΩ to ground) or a level shifter. A 1 kΩ series resistor is cheap protection even at 3.3 V. Common ground with the Pi (header pin 9/14). Power the receiver from its BEC/battery or the Pi 5 V pin — never the 3.3 V pin.
+- **Button:** use the Pi's **3.3 V** and **GND** only. No external voltage on the GPIO. A 1 kΩ series resistor on the GPIO leg is still a good idea.
+- Default pin: **GPIO17 = header pin 11**. Avoid GPIO 2/3 (I²C), 14/15 (serial) and 18–21 (I²S HATs).
 
-**Receiver failsafe — important:** when the transmitter is switched off or out of range, many receivers keep sending pulses at a *failsafe* position, and some hold the *last* position. The Pi can't tell that apart from a real signal, so if the button was held, the speakers would stay on. Set the receiver's failsafe for the PTT channel to **"no pulses"** (preferred) or to the **released** position. Then test it: hold the button, switch the transmitter off, and check that it mutes.
+**RC failsafe — important:** when the transmitter is off, many receivers keep sending failsafe or last-position pulses. Set the PTT channel failsafe to **"no pulses"** or the **released** position, then test: hold, switch the TX off, confirm mute.
 
 **Hardware test checklist** (run `make test` first for the logic tests — no hardware needed):
 

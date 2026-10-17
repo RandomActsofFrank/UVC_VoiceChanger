@@ -113,6 +113,7 @@ const FxPresetInfo kPresets[] = {
     {"tie-vocal", "TIE Pilot (vocal model)", true},
     {"trooper", "Stormtrooper", true},
     {"trooper-vocal", "Stormtrooper (vocal model)", true},
+    {"jawa", "Jawa", true},
     {"droid-voice", "Droid", true},
     {"dark-mech", "Dark Mechanical", false},
     {"quirky-droid", "Quirky Droid", false},
@@ -269,23 +270,22 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.lim_on = true;
     } else if (!strcmp(id, "tie-vocal")) {
         /* TIE Pilot with the vocal model ahead of the helmet/comms chain: a
-           slightly larger, masked tract with a touch of cavity resonance.
-           Pitch now moves only the excitation, so the -1.5 st drop no longer
-           drags the formants down with it. */
+           slightly larger, masked tract. Keep tract resonance low — on a
+           costume PA it howls like mic feedback if the poles get sharp. */
         fx_apply_preset("tie", &n);
         n.vt_on = true;
-        n.vt_formant = 0.92f;
-        n.vt_resonance = 0.3f;
-        n.vt_mix = 0.8f;
+        n.vt_formant = 0.96f;
+        n.vt_resonance = 0.05f;
+        n.vt_mix = 0.3f;
     } else if (!strcmp(id, "trooper-vocal")) {
         /* Stormtrooper with the vocal model ahead of the helmet/comms chain:
            a slightly larger tract, mild resonance, so the helmet colours a
            different voice rather than the performer's own. */
         fx_apply_preset("trooper", &n);
         n.vt_on = true;
-        n.vt_formant = 0.95f;
-        n.vt_resonance = 0.25f;
-        n.vt_mix = 0.75f;
+        n.vt_formant = 0.97f;
+        n.vt_resonance = 0.05f;
+        n.vt_mix = 0.35f;
     } else if (!strcmp(id, "droid")) {
         n.hp_on = true;
         n.hp_freq = 300.0f;
@@ -408,70 +408,100 @@ bool fx_apply_preset(const char* id, FxParams* p) {
         n.feq_high_hz = 5000.0f;
         n.feq_high_db = -2.0f;
         n.lim_on = true;
-    } else if (!strcmp(id, "trooper")) {
-        /* Helmet + comms: band-limited, compressed, gritty, with boxy
-           plastic-shell reflections; a little full-band dry keeps it intelligible. */
+    } else if (!strcmp(id, "jawa")) {
+        /* Ben Burtt's Jawas: dialogue sped up on tape (pitch and formants
+           move together) plus a short second copy so the chatter scrambles.
+           No vocal model — that would hold the formants and undo the speed-up. */
+        n.volume_db = 2.0f;
         n.pitch_on = true;
-        n.pitch_semitones = -1.0f;
+        n.pitch_semitones = 7.0f;
+        n.hp_on = true;
+        n.hp_freq = 180.0f;
+        n.hp_cascade = 1;
+        n.lp_on = true;
+        n.lp_freq = 7000.0f;
+        n.lp_cascade = 1;
+        n.comb_on = true;
+        n.comb_ms = 14.0f;
+        n.comb_feedback = 0.18f;
+        n.comb_damp = 0.55f;
+        n.comb_mix = 0.4f;
+        n.clip_on = true;
+        n.clip_factor = 2;
+        n.lim_on = true;
+    } else if (!strcmp(id, "trooper")) {
+        /* OT stormtrooper: voice through a small helmet speaker / walkie,
+           re-recorded. Narrow band, broad mid box, light grit, radio leveling.
+           One short slap only — feedback would ring like a room, which the
+           films do not have. */
+        n.pitch_on = true;
+        n.pitch_semitones = -0.5f;
+        n.hp_on = true;
+        n.hp_freq = 300.0f;
+        n.hp_cascade = 2;
+        n.lp_on = true;
+        n.lp_freq = 3200.0f;
+        n.lp_cascade = 2;
+        n.peak_on = true;
+        n.peak_freq = 1400.0f;
+        n.peak_q = 1.1f;
+        n.peak_gain_db = 4.0f;
+        n.comb_on = true;
+        n.comb_ms = 1.1f;
+        n.comb_feedback = 0.0f;
+        n.comb_mix = 0.22f;
+        n.clip_on = true;
+        n.clip_factor = 4;
         n.character_on = true;
         n.comp_on = true;
-        n.comp_threshold_db = -28.0f;
-        n.comp_ratio = 4.0f;
-        n.comp_attack_ms = 3.0f;
-        n.comp_release_ms = 60.0f;
-        n.comp_makeup_db = 8.0f;
-        n.char_mix = 0.95f;
-        n.res_on = true;
-        set_helmet_resonances(&n);
-        n.res1_q = 2.0f;
-        n.res1_gain_db = 3.0f;
-        n.res2_q = 2.5f;
-        n.res2_gain_db = 5.0f;
-        n.res3_gain_db = 6.0f;
-        n.res4_gain_db = 4.0f;
+        n.comp_threshold_db = -22.0f;
+        n.comp_ratio = 3.0f;
+        n.comp_attack_ms = 4.0f;
+        n.comp_release_ms = 90.0f;
+        n.comp_makeup_db = 3.0f;
+        n.char_mix = 0.45f;
         n.sat_on = true;
-        n.sat_drive_db = 12.0f;
-        n.sat_mix = 0.6f;
-        n.helmet_on = true;
-        n.helmet_low_hz = 350.0f;
-        n.helmet_high_hz = 3400.0f;
-        n.helmet_reflect_ms = 1.2f;
-        n.helmet_reflect_fb = 0.45f;
-        n.helmet_reflect_mix = 0.5f;
+        n.sat_drive_db = 7.0f;
+        n.sat_mix = 0.35f;
         n.lim_on = true;
     } else if (!strcmp(id, "tie")) {
-        /* Sealed flight mask over cockpit comms: narrower, harder compression,
-           asymmetric grit, slight engine-hum AM. */
+        /* TIE pilot comms: tighter and harsher than a stormtrooper. Higher
+           cut, lower top, a broad mask honk, a little more grit, and a faint
+           carrier (ring) instead of amplitude wobble. Still one short slap,
+           no repeating reflection. */
         n.pitch_on = true;
         n.pitch_semitones = -1.5f;
+        n.hp_on = true;
+        n.hp_freq = 420.0f;
+        n.hp_cascade = 2;
+        n.lp_on = true;
+        n.lp_freq = 2400.0f;
+        n.lp_cascade = 2;
+        n.peak_on = true;
+        n.peak_freq = 950.0f;
+        n.peak_q = 1.3f;
+        n.peak_gain_db = 5.0f;
+        n.ring_on = true;
+        n.ring_freq = 55.0f;
+        n.ring_mix = 0.08f;
+        n.comb_on = true;
+        n.comb_ms = 1.6f;
+        n.comb_feedback = 0.0f;
+        n.comb_mix = 0.2f;
+        n.clip_on = true;
+        n.clip_factor = 5;
         n.character_on = true;
         n.comp_on = true;
-        n.comp_threshold_db = -30.0f;
-        n.comp_ratio = 6.0f;
-        n.comp_attack_ms = 2.0f;
-        n.comp_release_ms = 50.0f;
-        n.comp_makeup_db = 10.0f;
-        n.char_mix = 0.97f;
-        n.res_on = true;
-        set_helmet_resonances(&n);
-        n.res1_q = 2.0f;
-        n.res1_gain_db = 3.0f;
-        n.res2_gain_db = 7.0f;
-        n.res3_gain_db = 5.0f;
-        n.res4_q = 4.0f;
-        n.res4_gain_db = 3.0f;
+        n.comp_threshold_db = -24.0f;
+        n.comp_ratio = 4.0f;
+        n.comp_attack_ms = 3.0f;
+        n.comp_release_ms = 70.0f;
+        n.comp_makeup_db = 3.0f;
+        n.char_mix = 0.55f;
         n.sat_on = true;
-        n.sat_drive_db = 15.0f;
-        n.sat_bias = 0.15f;
-        n.sat_mix = 0.7f;
-        n.helmet_on = true;
-        n.helmet_low_hz = 500.0f;
-        n.helmet_high_hz = 2600.0f;
-        n.helmet_reflect_ms = 0.8f;
-        n.helmet_reflect_fb = 0.55f;
-        n.helmet_reflect_mix = 0.45f;
-        n.helmet_am_hz = 50.0f;
-        n.helmet_am_depth = 0.12f;
+        n.sat_drive_db = 10.0f;
+        n.sat_bias = 0.08f;
+        n.sat_mix = 0.45f;
         n.lim_on = true;
     } else if (!strcmp(id, "droid-voice")) {
         /* Metallic droid body: tuned resonances, ringing cavity, light ring mod. */
