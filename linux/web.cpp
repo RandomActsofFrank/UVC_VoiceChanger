@@ -98,6 +98,36 @@ p.hint{color:#aaa;font-size:.85em}
 <body>
 <h1>UVC Voice Changer</h1>
 <p class="sub">Stereo &middot; 48 kHz &middot; 16-bit &middot; 2 ch</p>
+<p class="sub" id="build">Page build: ptt-2</p>
+
+<h2>Push-to-talk</h2>
+<label class="opt"><input type="checkbox" id="ptt_enabled">Enable push-to-talk (speakers muted unless the button is held)</label>
+<label for="ptt_source">Input</label>
+<select id="ptt_source">
+<option value="rc">RC receiver PWM</option>
+<option value="button">Physical button (GPIO)</option>
+</select>
+<div id="pttdetail"></div>
+<details id="pttcfg">
+<summary>PTT settings</summary>
+<p class="hint" id="ptthint"></p>
+<div class="pgrid">
+<label>GPIO (BCM number)<input type="number" id="ptt_gpio" min="0" max="53" step="1"></label>
+<label>Signal timeout (ms)<input type="number" id="ptt_timeout_ms" min="20" max="2000" step="10"></label>
+</div>
+<div class="pgrid" id="ptt_rc">
+<label>ON threshold (&micro;s)<input type="number" id="ptt_on_us" min="100" max="5000" step="10"></label>
+<label>OFF threshold (&micro;s)<input type="number" id="ptt_off_us" min="100" max="5000" step="10"></label>
+<label>Valid pulse min (&micro;s)<input type="number" id="ptt_min_us" min="100" max="5000" step="10"></label>
+<label>Valid pulse max (&micro;s)<input type="number" id="ptt_max_us" min="100" max="5000" step="10"></label>
+</div>
+<div class="pgrid" id="ptt_btn">
+<label>Debounce (ms)<input type="number" id="ptt_debounce_ms" min="0" max="200" step="1"></label>
+<label class="opt" style="align-self:end"><input type="checkbox" id="ptt_active_low">Active-low (press connects pin to GND)</label>
+</div>
+<div class="row"><button id="pttsave">Save PTT settings</button></div>
+</details>
+<div id="pttmsg"></div>
 
 <div id="active">Loading&hellip;</div>
 <div id="ptt" role="status" hidden></div>
@@ -138,24 +168,6 @@ p.hint{color:#aaa;font-size:.85em}
 <div id="status" class="idle">Loading&hellip;</div>
 <label class="opt"><input type="checkbox" id="autostart">Start audio automatically (at boot, and after the USB audio reconnects)</label>
 <label class="adv"><input type="checkbox" id="all">Show all ALSA device names (troubleshooting)</label>
-
-<h2>Push-to-talk</h2>
-<label class="opt"><input type="checkbox" id="ptt_enabled">Enable push-to-talk (RC transmitter button; speakers muted unless held)</label>
-<div id="pttdetail"></div>
-<details id="pttcfg">
-<summary>PTT settings</summary>
-<p class="hint">The receiver signal must be 3.3&nbsp;V logic: Pi GPIO pins are not 5&nbsp;V tolerant (see README). Hold and release the button and watch the PWM reading above to pick thresholds. Pulses at or over ON unmute, at or under OFF mute; in between keeps the current state. Set ON below OFF if the button shortens the pulse.</p>
-<div class="pgrid">
-<label>GPIO (BCM number)<input type="number" id="ptt_gpio" min="0" max="53" step="1"></label>
-<label>Signal timeout (ms)<input type="number" id="ptt_timeout_ms" min="20" max="2000" step="10"></label>
-<label>ON threshold (&micro;s)<input type="number" id="ptt_on_us" min="100" max="5000" step="10"></label>
-<label>OFF threshold (&micro;s)<input type="number" id="ptt_off_us" min="100" max="5000" step="10"></label>
-<label>Valid pulse min (&micro;s)<input type="number" id="ptt_min_us" min="100" max="5000" step="10"></label>
-<label>Valid pulse max (&micro;s)<input type="number" id="ptt_max_us" min="100" max="5000" step="10"></label>
-</div>
-<div class="row"><button id="pttsave">Save PTT settings</button></div>
-</details>
-<div id="pttmsg"></div>
 
 <details id="advanced">
 <summary>Advanced: DSP tuning (not needed for normal use)</summary>
@@ -212,9 +224,13 @@ function renderPtt(p) {
     return;
   }
   const audio = !p.running ? 'STOPPED' : p.gain <= 0 ? 'MUTED' : p.gain >= 1 ? 'ACTIVE' : 'FADING';
+  const src = p.source === 'button' ? 'Button' : 'RC';
+  const reading = p.source === 'button'
+    ? ('Button ' + (p.pulse_us ? 'PRESSED' : 'RELEASED'))
+    : ('PWM ' + (p.pulse_us ? p.pulse_us + ' \u00b5s' : '\u2014'));
   $('pttdetail').textContent =
-    'PTT ' + (p.state === 'talking' ? 'ON' : 'OFF') +
-    ' \u00b7 PWM ' + (p.pulse_us ? p.pulse_us + ' \u00b5s' : '\u2014') +
+    src + ' \u00b7 PTT ' + (p.state === 'talking' ? 'ON' : 'OFF') +
+    ' \u00b7 ' + reading +
     ' \u00b7 Signal ' + (p.state === 'lost' ? 'LOST' : 'VALID') +
     ' \u00b7 Audio ' + audio +
     (p.chip ? '\nGPIO' + p.gpio + ' on ' + p.chip : '') +
@@ -689,7 +705,18 @@ function updateStartup() {
   $('startupmsg').textContent = 'Loads at startup: ' + settings.startup_name;
 }
 
-const PTT_KEYS = ['gpio', 'timeout_ms', 'on_us', 'off_us', 'min_us', 'max_us'];
+const PTT_KEYS = ['gpio', 'timeout_ms', 'on_us', 'off_us', 'min_us', 'max_us', 'debounce_ms'];
+const PTT_HINT = {
+  rc: 'RC: receiver signal must be 3.3\u00a0V logic (Pi GPIO is not 5\u00a0V tolerant). Hold and release the transmitter button and watch the PWM reading to pick thresholds. Pulses at or over ON unmute, at or under OFF mute. Set ON below OFF if the button shortens the pulse.',
+  button: 'Button: momentary switch on one GPIO. Default is active-high: one side to the GPIO, other to 3.3\u00a0V, with the Pi pull-down holding it released. Tick Active-low for a switch to GND instead (uses the pull-up). Never put 5\u00a0V on a GPIO pin. Debounce ignores chatter on press/release.'
+};
+
+function updatePttSourceUi() {
+  const src = $('ptt_source').value || 'rc';
+  $('ptt_rc').hidden = src !== 'rc';
+  $('ptt_btn').hidden = src !== 'button';
+  $('ptthint').textContent = PTT_HINT[src] || PTT_HINT.rc;
+}
 
 function showSettings(s) {
   settings = s;
@@ -697,12 +724,19 @@ function showSettings(s) {
   updateStartup();
   if (s.ptt && !s.error) {
     $('ptt_enabled').checked = s.ptt.enabled;
-    for (const k of PTT_KEYS) $('ptt_' + k).value = s.ptt[k];
+    $('ptt_source').value = s.ptt.source === 'button' ? 'button' : 'rc';
+    $('ptt_active_low').checked = !!s.ptt.active_low;
+    for (const k of PTT_KEYS) {
+      if (s.ptt[k] !== undefined) $('ptt_' + k).value = s.ptt[k];
+    }
+    updatePttSourceUi();
   }
 }
 
 async function savePtt() {
   const body = 'ptt_enabled=' + ($('ptt_enabled').checked ? 1 : 0) +
+    '&ptt_source=' + encodeURIComponent($('ptt_source').value) +
+    '&ptt_active_low=' + ($('ptt_active_low').checked ? 1 : 0) +
     PTT_KEYS.map(k => '&ptt_' + k + '=' + encodeURIComponent($('ptt_' + k).value)).join('');
   const s = await postSettings(body);
   $('pttmsg').textContent = s.error ||
@@ -712,7 +746,9 @@ async function savePtt() {
 }
 
 $('ptt_enabled').onchange = savePtt;
+$('ptt_source').onchange = () => { updatePttSourceUi(); };
 $('pttsave').onclick = savePtt;
+updatePttSourceUi();
 
 async function postSettings(body) {
   const s = await api('/api/settings', {
@@ -1204,8 +1240,9 @@ private:
 
     std::string ptt_status_json() {
         const PttConfig c = ptt_->config();
-        char nums[96];
-        snprintf(nums, sizeof(nums), "\"pulse_us\":%d,\"gpio\":%d,\"gain\":%.3f", ptt_->pulse_us(), c.gpio,
+        char nums[128];
+        snprintf(nums, sizeof(nums), "\"source\":\"%s\",\"pulse_us\":%d,\"gpio\":%d,\"gain\":%.3f",
+                 ptt_source_name(c.source), ptt_->pulse_us(), c.gpio,
                  engine_.running() ? engine_.output_gain() : 0.0f);
         return std::string("{\"state\":\"") + ptt_state_name(ptt_->state()) + "\"," + nums +
                ",\"running\":" + (engine_.running() ? "true" : "false") + ",\"chip\":\"" +
@@ -1213,11 +1250,12 @@ private:
     }
 
     static std::string ptt_settings_json(const PttConfig& c) {
-        char buf[256];
+        char buf[320];
         snprintf(buf, sizeof(buf),
-                 "{\"enabled\":%s,\"gpio\":%d,\"on_us\":%d,\"off_us\":%d,\"timeout_ms\":%d,\"min_us\":%d,"
-                 "\"max_us\":%d}",
-                 c.enabled ? "true" : "false", c.gpio, c.on_us, c.off_us, c.timeout_ms, c.min_us, c.max_us);
+                 "{\"enabled\":%s,\"source\":\"%s\",\"gpio\":%d,\"on_us\":%d,\"off_us\":%d,\"timeout_ms\":%d,"
+                 "\"min_us\":%d,\"max_us\":%d,\"active_low\":%s,\"debounce_ms\":%d}",
+                 c.enabled ? "true" : "false", ptt_source_name(c.source), c.gpio, c.on_us, c.off_us, c.timeout_ms,
+                 c.min_us, c.max_us, c.active_low ? "true" : "false", c.debounce_ms);
         return buf;
     }
 
@@ -1449,12 +1487,25 @@ private:
             c->enabled = v == "1" || v == "true";
             any = true;
         }
+        if (form_find(body, "ptt_source", &v)) {
+            c->source = ptt_source_from_name(v.c_str());
+            any = true;
+        }
+        if (form_find(body, "ptt_active_low", &v)) {
+            c->active_low = v == "1" || v == "true";
+            any = true;
+        }
         const struct {
             const char* key;
             int* field;
         } ints[] = {
-            {"ptt_gpio", &c->gpio},       {"ptt_on_us", &c->on_us},   {"ptt_off_us", &c->off_us},
-            {"ptt_timeout_ms", &c->timeout_ms}, {"ptt_min_us", &c->min_us}, {"ptt_max_us", &c->max_us},
+            {"ptt_gpio", &c->gpio},
+            {"ptt_on_us", &c->on_us},
+            {"ptt_off_us", &c->off_us},
+            {"ptt_timeout_ms", &c->timeout_ms},
+            {"ptt_min_us", &c->min_us},
+            {"ptt_max_us", &c->max_us},
+            {"ptt_debounce_ms", &c->debounce_ms},
         };
         for (const auto& f : ints) {
             if (form_find(body, f.key, &v)) {
@@ -1569,6 +1620,7 @@ int run_web(const EngineConfig* defaults, volatile sig_atomic_t* keep_running, P
             "UVC Linux audio engine — web config\n"
             "  open http://%s.local:%d/ from a phone or computer on the same network\n"
             "  presets file: %s\n"
+            "  page build: ptt-2\n"
             "  Ctrl+C to quit\n",
             host,
             port,

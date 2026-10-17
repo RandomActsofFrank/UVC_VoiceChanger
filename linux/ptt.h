@@ -1,16 +1,18 @@
 #pragma once
 
 /*
- * Push-to-talk from an RC receiver PWM channel, and the output gate it drives.
+ * Push-to-talk input (RC PWM or a physical GPIO button) and the output gate.
  *
- *   RC receiver PWM -> GPIO edge events (kernel timestamps) -> PttDecoder
- *     -> PttMonitor state (lock-free) -> OutputGate in the audio loop
+ *   GPIO -> PttMonitor (own thread) -> lock-free state -> OutputGate in audio
  *
- * Fail-safe: output is allowed only while PTT is enabled AND valid pulses
- * keep arriving AND the latest pulses are in the ON range. The audio side
- * checks the age of the last valid pulse itself, so a lost signal, a dead
- * receiver, an unavailable GPIO or a stalled monitor thread all read as
- * "signal lost" -> muted, never as the last known state.
+ * Sources (pick one in settings):
+ *   rc     — RC receiver PWM channel; pulse-width thresholds with hysteresis
+ *   button — momentary switch on a GPIO; held = talk, released = mute
+ *
+ * Fail-safe (both sources): output is allowed only while PTT is enabled AND
+ * the monitor is healthy AND the input says "talk". The audio side ages the
+ * last healthy update itself, so a dead GPIO, stalled thread or missing RC
+ * signal always reads as "signal lost" -> muted — never the last known state.
  */
 
 #include <stdint.h>
@@ -22,22 +24,34 @@
 
 enum PttState {
     kPttDisabled = 0,   /* PTT off in settings: output always allowed */
-    kPttSignalLost = 1, /* no valid pulses within the timeout: muted */
-    kPttInactive = 2,   /* valid pulses, button released: muted */
-    kPttActive = 3,     /* valid pulses, button held: output allowed */
+    kPttSignalLost = 1, /* no healthy updates within the timeout: muted */
+    kPttInactive = 2,   /* healthy, button/RC released: muted */
+    kPttActive = 3,     /* healthy, button/RC held: output allowed */
+};
+
+enum PttSource {
+    kPttSourceRc = 0,
+    kPttSourceButton = 1,
 };
 
 const char* ptt_state_name(int state);
+const char* ptt_source_name(int source);
+int ptt_source_from_name(const char* name); /* unknown -> rc */
 
 struct PttConfig {
     bool enabled = false;
+    int source = kPttSourceRc;
     std::string chip;    /* "" = auto-detect the 40-pin header's GPIO chip */
     int gpio = 17;       /* BCM GPIO number (header pin 11) */
+    /* RC PWM: */
     int on_us = 1700;    /* pulse at/over this -> ON */
     int off_us = 1300;   /* pulse at/under this -> OFF; in between keeps state */
     int timeout_ms = 100;
     int min_us = 700;    /* pulses outside min..max are invalid -> muted */
     int max_us = 2300;
+    /* Physical button: */
+    bool active_low = false; /* false = press pulls pin high (to 3.3 V); true = press to GND */
+    int debounce_ms = 25;
 };
 
 void ptt_clamp(PttConfig* cfg);
@@ -85,7 +99,7 @@ class PttMonitor {
 public:
     ~PttMonitor() { stop(); }
 
-    void start(const PttConfig& cfg); /* (re)start with new settings; muted until valid pulses */
+    void start(const PttConfig& cfg); /* (re)start; muted until the source says talk */
     void stop();
 
     /* Lock-free; safe from the audio thread. */
@@ -102,11 +116,13 @@ public:
 
 private:
     void loop(PttConfig cfg);
+    void loop_rc(PttConfig cfg);
+    void loop_button(PttConfig cfg);
     void set_error(const std::string& e);
 
     std::atomic<bool> enabled_{false};
     std::atomic<bool> run_{false};
-    std::atomic<int64_t> last_valid_ns_{0}; /* CLOCK_MONOTONIC of the last trusted pulse; 0 = none */
+    std::atomic<int64_t> last_valid_ns_{0}; /* CLOCK_MONOTONIC of last healthy update; 0 = none */
     std::atomic<bool> active_{false};
     std::atomic<int64_t> timeout_ns_{100000000};
     std::atomic<int> pulse_us_{0};

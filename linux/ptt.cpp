@@ -33,6 +33,17 @@ const char* ptt_state_name(int state) {
     return "lost";
 }
 
+const char* ptt_source_name(int source) {
+    return source == kPttSourceButton ? "button" : "rc";
+}
+
+int ptt_source_from_name(const char* name) {
+    if (name && !strcmp(name, "button")) {
+        return kPttSourceButton;
+    }
+    return kPttSourceRc;
+}
+
 namespace {
 
 int clampi(int v, int lo, int hi) {
@@ -42,15 +53,20 @@ int clampi(int v, int lo, int hi) {
 }  // namespace
 
 void ptt_clamp(PttConfig* cfg) {
+    cfg->source = cfg->source == kPttSourceButton ? kPttSourceButton : kPttSourceRc;
     cfg->gpio = clampi(cfg->gpio, 0, 53);
     cfg->on_us = clampi(cfg->on_us, 100, 5000);
     cfg->off_us = clampi(cfg->off_us, 100, 5000);
     cfg->timeout_ms = clampi(cfg->timeout_ms, 20, 2000);
     cfg->min_us = clampi(cfg->min_us, 100, 5000);
     cfg->max_us = clampi(cfg->max_us, 100, 5000);
+    cfg->debounce_ms = clampi(cfg->debounce_ms, 0, 200);
 }
 
 std::string ptt_validate(const PttConfig& cfg) {
+    if (cfg.source == kPttSourceButton) {
+        return "";
+    }
     if (cfg.min_us >= cfg.max_us) {
         return "Valid pulse range: minimum must be below maximum.";
     }
@@ -181,8 +197,8 @@ std::string find_header_chip(std::string* label) {
     return "/dev/gpiochip0";
 }
 
-/* Returns the line fd (edge events on both edges, pull-down), or -1. */
-int open_line(const std::string& chip, int offset, std::string* err) {
+/* Returns the line fd (both edges), or -1. pull_up selects internal bias. */
+int open_line(const std::string& chip, int offset, bool pull_up, std::string* err) {
     const int cfd = open(chip.c_str(), O_RDWR | O_CLOEXEC);
     if (cfd < 0) {
         const int e = errno;
@@ -197,10 +213,10 @@ int open_line(const std::string& chip, int offset, std::string* err) {
     req.offsets[0] = (uint32_t)offset;
     req.num_lines = 1;
     snprintf(req.consumer, sizeof(req.consumer), "%s", "uvc-ptt");
-    /* Pull-down: an unplugged or unpowered receiver reads as a steady low
-       (no pulses), which the timeout turns into "signal lost". */
+    /* Pull-down: floating / unpowered RC reads as no pulses. Pull-up: button
+       to GND (active-low) reads released when open. */
     req.config.flags = GPIO_V2_LINE_FLAG_INPUT | GPIO_V2_LINE_FLAG_EDGE_RISING | GPIO_V2_LINE_FLAG_EDGE_FALLING |
-                       GPIO_V2_LINE_FLAG_BIAS_PULL_DOWN;
+                       (pull_up ? GPIO_V2_LINE_FLAG_BIAS_PULL_UP : GPIO_V2_LINE_FLAG_BIAS_PULL_DOWN);
     req.event_buffer_size = 64;
     if (ioctl(cfd, GPIO_V2_GET_LINE_IOCTL, &req) < 0) {
         const int e = errno;
@@ -215,6 +231,17 @@ int open_line(const std::string& chip, int offset, std::string* err) {
     }
     close(cfd);
     return req.fd;
+}
+
+bool read_line_level(int fd, bool* high) {
+    struct gpio_v2_line_values vals;
+    memset(&vals, 0, sizeof(vals));
+    vals.mask = 1;
+    if (ioctl(fd, GPIO_V2_LINE_GET_VALUES_IOCTL, &vals) < 0) {
+        return false;
+    }
+    *high = (vals.bits & 1) != 0;
+    return true;
 }
 
 #endif
@@ -285,6 +312,16 @@ void PttMonitor::set_error(const std::string& e) {
 }
 
 void PttMonitor::loop(PttConfig cfg) {
+    if (cfg.source == kPttSourceButton) {
+        loop_button(cfg);
+    } else {
+        loop_rc(cfg);
+    }
+    active_.store(false);
+    last_valid_ns_.store(0);
+}
+
+void PttMonitor::loop_rc(PttConfig cfg) {
 #if PTT_HAVE_GPIO_V2
     PttDecoder dec;
     dec.configure(cfg);
@@ -307,10 +344,10 @@ void PttMonitor::loop(PttConfig cfg) {
             std::string label;
             const std::string chip = cfg.chip.empty() ? find_header_chip(&label) : cfg.chip;
             std::string err;
-            fd = open_line(chip, cfg.gpio, &err);
+            fd = open_line(chip, cfg.gpio, false, &err);
             if (fd < 0) {
                 set_error(err);
-                for (int i = 0; i < 20 && run_.load(); i++) { /* retry every 2 s */
+                for (int i = 0; i < 20 && run_.load(); i++) {
                     usleep(100000);
                 }
                 continue;
@@ -320,7 +357,7 @@ void PttMonitor::loop(PttConfig cfg) {
                 chip_ = label.empty() ? chip : chip + " (" + label + ")";
             }
             set_error("");
-            fprintf(stderr, "PTT: monitoring GPIO%d on %s\n", cfg.gpio, chip.c_str());
+            fprintf(stderr, "PTT: RC PWM on GPIO%d (%s)\n", cfg.gpio, chip.c_str());
             last_seq = 0;
             last_pulse_ns = last_any_ns = ptt_now_ns();
         }
@@ -351,7 +388,7 @@ void PttMonitor::loop(PttConfig cfg) {
             const int count = n > 0 ? (int)(n / (ssize_t)sizeof(ev[0])) : 0;
             for (int i = 0; i < count; i++) {
                 if (last_seq != 0 && ev[i].line_seqno != last_seq + 1) {
-                    dec.drop_edge(); /* kernel buffer overflowed: don't pair across the gap */
+                    dec.drop_edge();
                 }
                 last_seq = ev[i].line_seqno;
                 const bool rising = ev[i].id == GPIO_V2_LINE_EVENT_RISING_EDGE;
@@ -373,13 +410,12 @@ void PttMonitor::loop(PttConfig cfg) {
                 }
             }
         }
-        /* Timeout on this side too (the audio side checks independently). */
         const int64_t now = ptt_now_ns();
         if (now - last_pulse_ns > timeout_ns) {
             active_.store(false, std::memory_order_release);
             last_valid_ns_.store(0, std::memory_order_release);
             dec.reset();
-            last_pulse_ns = now; /* re-arm; stays lost until kPulsesToLock valid pulses */
+            last_pulse_ns = now;
         }
         if (now - last_any_ns > timeout_ns) {
             pulse_us_.store(0, std::memory_order_relaxed);
@@ -395,8 +431,115 @@ void PttMonitor::loop(PttConfig cfg) {
         usleep(100000);
     }
 #endif
-    active_.store(false);
-    last_valid_ns_.store(0);
+}
+
+void PttMonitor::loop_button(PttConfig cfg) {
+#if PTT_HAVE_GPIO_V2
+    /* Heartbeat: while the GPIO is open and readable, refresh last_valid_ns so
+       a stalled thread / lost GPIO becomes SIGNAL LOST. Button released is
+       READY (muted), not lost. */
+    const int64_t debounce_ns = (int64_t)cfg.debounce_ms * 1000000;
+    int fd = -1;
+    bool pending = false;
+    bool settled = false;
+    int64_t pending_since = 0;
+
+    auto lose = [&]() {
+        active_.store(false, std::memory_order_release);
+        last_valid_ns_.store(0, std::memory_order_release);
+        pulse_us_.store(0, std::memory_order_relaxed);
+        settled = false;
+    };
+
+    auto pressed_from_high = [&](bool high) { return cfg.active_low ? !high : high; };
+
+    while (run_.load()) {
+        if (fd < 0) {
+            lose();
+            std::string label;
+            const std::string chip = cfg.chip.empty() ? find_header_chip(&label) : cfg.chip;
+            std::string err;
+            fd = open_line(chip, cfg.gpio, cfg.active_low, &err);
+            if (fd < 0) {
+                set_error(err);
+                for (int i = 0; i < 20 && run_.load(); i++) {
+                    usleep(100000);
+                }
+                continue;
+            }
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                chip_ = label.empty() ? chip : chip + " (" + label + ")";
+            }
+            set_error("");
+            fprintf(stderr,
+                    "PTT: button on GPIO%d (%s), %s\n",
+                    cfg.gpio,
+                    chip.c_str(),
+                    cfg.active_low ? "active-low (press to GND)" : "active-high (press to 3.3 V)");
+            bool high = false;
+            if (read_line_level(fd, &high)) {
+                pending = settled = pressed_from_high(high);
+                active_.store(settled, std::memory_order_release);
+                last_valid_ns_.store(ptt_now_ns(), std::memory_order_release);
+            }
+            pending_since = ptt_now_ns();
+        }
+
+        struct pollfd p = {fd, POLLIN, 0};
+        const int r = poll(&p, 1, 20);
+        if (r < 0 && errno != EINTR) {
+            set_error(std::string("GPIO poll failed: ") + strerror(errno));
+            close(fd);
+            fd = -1;
+            continue;
+        }
+        if (r > 0 && (p.revents & (POLLERR | POLLHUP | POLLNVAL))) {
+            set_error("GPIO line went away");
+            close(fd);
+            fd = -1;
+            continue;
+        }
+        if (r > 0 && (p.revents & POLLIN)) {
+            struct gpio_v2_line_event ev[16];
+            const ssize_t n = read(fd, ev, sizeof(ev));
+            if (n < 0 && errno != EINTR && errno != EAGAIN) {
+                set_error(std::string("GPIO read failed: ") + strerror(errno));
+                close(fd);
+                fd = -1;
+                continue;
+            }
+            const int count = n > 0 ? (int)(n / (ssize_t)sizeof(ev[0])) : 0;
+            for (int i = 0; i < count; i++) {
+                const bool high = ev[i].id == GPIO_V2_LINE_EVENT_RISING_EDGE;
+                const bool want = pressed_from_high(high);
+                if (want != pending) {
+                    pending = want;
+                    pending_since = ptt_now_ns();
+                }
+            }
+        }
+
+        const int64_t now = ptt_now_ns();
+        if (pending != settled && now - pending_since >= debounce_ns) {
+            settled = pending;
+            active_.store(settled, std::memory_order_release);
+        }
+        /* Healthy monitor heartbeat (audio side still ages this). */
+        last_valid_ns_.store(now, std::memory_order_release);
+        /* Reuse the PWM readout slot: 1 = pressed, 0 = released (for the UI). */
+        pulse_us_.store(settled ? 1 : 0, std::memory_order_relaxed);
+    }
+    if (fd >= 0) {
+        close(fd);
+    }
+#else
+    (void)cfg;
+    set_error("GPIO edge events need the Linux GPIO v2 API (kernel 5.10 or newer headers)");
+    while (run_.load()) {
+        usleep(100000);
+    }
+#endif
 }
 
 /* ---- OutputGate ---- */

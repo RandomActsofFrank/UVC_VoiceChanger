@@ -121,8 +121,20 @@ int main(int argc, char** argv) {
     PttMonitor ptt;
     ptt.start(settings.ptt);
     if (settings.ptt.enabled) {
-        fprintf(stderr, "Push-to-talk on: GPIO%d, ON >= %d us, OFF <= %d us, timeout %d ms (muted until pressed)\n",
-                settings.ptt.gpio, settings.ptt.on_us, settings.ptt.off_us, settings.ptt.timeout_ms);
+        if (settings.ptt.source == kPttSourceButton) {
+            fprintf(stderr,
+                    "Push-to-talk on: physical button GPIO%d (%s), debounce %d ms (muted until pressed)\n",
+                    settings.ptt.gpio,
+                    settings.ptt.active_low ? "active-low" : "active-high",
+                    settings.ptt.debounce_ms);
+        } else {
+            fprintf(stderr,
+                    "Push-to-talk on: RC PWM GPIO%d, ON >= %d us, OFF <= %d us, timeout %d ms (muted until pressed)\n",
+                    settings.ptt.gpio,
+                    settings.ptt.on_us,
+                    settings.ptt.off_us,
+                    settings.ptt.timeout_ms);
+        }
     }
 
     signal(SIGINT, on_signal);

@@ -66,6 +66,8 @@ bool AppSettings::load(const std::string& path) {
             startup_preset = value;
         } else if (key == "ptt_enabled") {
             ptt.enabled = value == "1" || value == "true";
+        } else if (key == "ptt_source") {
+            ptt.source = ptt_source_from_name(value.c_str());
         } else if (key == "ptt_chip") {
             ptt.chip = value;
         } else if (key == "ptt_gpio") {
@@ -80,6 +82,10 @@ bool AppSettings::load(const std::string& path) {
             ptt.min_us = atoi(value.c_str());
         } else if (key == "ptt_max_us") {
             ptt.max_us = atoi(value.c_str());
+        } else if (key == "ptt_active_low") {
+            ptt.active_low = value == "1" || value == "true";
+        } else if (key == "ptt_debounce_ms") {
+            ptt.debounce_ms = atoi(value.c_str());
         }
     }
     fclose(f);
@@ -107,25 +113,31 @@ bool AppSettings::save(const std::string& path, std::string* err) const {
             "output=%s\n"
             "startup_preset=%s\n"
             "ptt_enabled=%d\n"
+            "ptt_source=%s\n"
             "ptt_chip=%s\n"
             "ptt_gpio=%d\n"
             "ptt_on_us=%d\n"
             "ptt_off_us=%d\n"
             "ptt_timeout_ms=%d\n"
             "ptt_min_us=%d\n"
-            "ptt_max_us=%d\n",
+            "ptt_max_us=%d\n"
+            "ptt_active_low=%d\n"
+            "ptt_debounce_ms=%d\n",
             autostart ? 1 : 0,
             one_line(input).c_str(),
             one_line(output).c_str(),
             one_line(startup_preset).c_str(),
             ptt.enabled ? 1 : 0,
+            ptt_source_name(ptt.source),
             one_line(ptt.chip).c_str(),
             ptt.gpio,
             ptt.on_us,
             ptt.off_us,
             ptt.timeout_ms,
             ptt.min_us,
-            ptt.max_us);
+            ptt.max_us,
+            ptt.active_low ? 1 : 0,
+            ptt.debounce_ms);
     const bool ok = fflush(f) == 0 && fclose(f) == 0;
     if (!ok || rename(tmp.c_str(), path.c_str()) < 0) {
         *err = "Cannot save " + path + ": " + strerror(errno);
